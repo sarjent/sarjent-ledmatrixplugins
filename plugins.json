@@ -1,27 +1,28 @@
 {
   "plugins": [
     {
-      "id": "nfl-draft",
-      "name": "NFL Draft",
-      "description": "Displays projected NFL draft picks from ESPN with live draft tracking support during the annual NFL Draft event. Includes simulate_live mode to replay a completed draft using real ESPN core API data. Shows team logos, player names, positions, and pick numbers in a scrolling display.",
+      "id": "nfl-draft-ticker",
+      "name": "NFL Draft Ticker",
+      "description": "Displays projected and live NFL Draft Ticker picks from ESPN with live draft tracking support during the annual NFL Draft event. Includes simulate_live mode to replay a completed draft using real ESPN core API data. Shows team logos, player names, positions, and pick numbers in a scrolling display.",
       "author": "sarjent",
       "category": "sports",
       "tags": [
         "nfl",
         "draft",
+        "ticker",
         "football",
         "sports",
         "espn"
       ],
       "repo": "https://github.com/sarjent/sarjent-ledmatrixplugins",
       "branch": "main",
-      "plugin_path": "plugins/nfl-draft",
+      "plugin_path": "plugins/nfl-draft-ticker",
       "stars": 0,
       "downloads": 0,
       "last_updated": "2026-05-11",
       "verified": false,
       "screenshot": "",
-      "latest_version": "1.4.1"
+      "latest_version": "1.4.2"
     },
     {
       "id": "pga-tour-leaderboard",
