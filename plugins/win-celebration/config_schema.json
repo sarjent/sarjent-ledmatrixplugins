@@ -1,0 +1,486 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Win Celebration Plugin Configuration",
+  "description": "Configuration for the Win Celebration plugin. Place each team's GIF file alongside manager.py and reference it by filename in gif_file. Slots team1–team5 are checked in order; leave abbreviation blank to disable a slot.",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "Enable or disable the plugin",
+      "default": true
+    },
+    "team1": {
+      "type": "object",
+      "description": "Team 1 — primary team to monitor",
+      "properties": {
+        "abbreviation": {
+          "type": "string",
+          "description": "ESPN team abbreviation (e.g. PIT, CHC, NYY). Leave blank to disable this slot.",
+          "default": "PIT"
+        },
+        "sport": {
+          "type": "string",
+          "description": "Sport / league",
+          "enum": ["mlb", "nfl", "nba", "nhl"],
+          "default": "mlb"
+        },
+        "gif_file": {
+          "type": "string",
+          "description": "Animated GIF filename. Bundled: jolly-roger.gif (Pirates), fly-the-w.gif (Cubs). Drop any custom GIF alongside manager.py.",
+          "default": "jolly-roger.gif"
+        },
+        "gif_upload": {
+          "type": "array",
+          "title": "Upload Custom GIF",
+          "description": "Upload a custom animated GIF to use instead of gif_file (overrides gif_file when set). Max 5 MB.",
+          "x-widget": "file-upload",
+          "x-upload-config": {
+            "endpoint": "/api/v3/plugins/assets/upload",
+            "plugin_id": "win-celebration",
+            "max_files": 1,
+            "allowed_types": ["image/gif"],
+            "max_size_mb": 5
+          },
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "path": {"type": "string"},
+              "filename": {"type": "string"},
+              "size": {"type": "integer"},
+              "uploaded_at": {"type": "string"}
+            }
+          },
+          "default": []
+        },
+        "win_text": {
+          "type": "string",
+          "description": "Short text overlay when this team wins (e.g. RAISE IT!). Defaults to '<ABBR> WINS!' if blank.",
+          "default": "RAISE IT!"
+        },
+        "primary_color": {
+          "type": "array",
+          "description": "Team primary color [R, G, B] — used for win text and programmatic fallback animation",
+          "items": {"type": "integer", "minimum": 0, "maximum": 255},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [253, 184, 39]
+        },
+        "secondary_color": {
+          "type": "array",
+          "description": "Team secondary color [R, G, B] — used in programmatic fallback animation",
+          "items": {"type": "integer", "minimum": 0, "maximum": 255},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0, 0, 0]
+        },
+        "animation_style": {
+          "type": "string",
+          "description": "Programmatic animation when no GIF is loaded. 'skull_crossbones' — pulsing skull-and-crossbones in brand colors. 'waving_flag' — color-wave flag with team abbreviation. 'team_logo' — team logo from LEDMatrix assets with pulsing brightness.",
+          "enum": ["waving_flag", "skull_crossbones", "team_logo"],
+          "default": "team_logo"
+        }
+      },
+      "additionalProperties": false
+    },
+    "team2": {
+      "type": "object",
+      "description": "Team 2 — optional second team to monitor",
+      "properties": {
+        "abbreviation": {
+          "type": "string",
+          "description": "ESPN team abbreviation (e.g. CHC, NYY). Leave blank to disable this slot.",
+          "default": "CHC"
+        },
+        "sport": {
+          "type": "string",
+          "description": "Sport / league",
+          "enum": ["mlb", "nfl", "nba", "nhl"],
+          "default": "mlb"
+        },
+        "gif_file": {
+          "type": "string",
+          "description": "Animated GIF filename. Bundled: jolly-roger.gif (Pirates), fly-the-w.gif (Cubs).",
+          "default": "fly-the-w.gif"
+        },
+        "gif_upload": {
+          "type": "array",
+          "title": "Upload Custom GIF",
+          "description": "Upload a custom animated GIF to use instead of gif_file (overrides gif_file when set). Max 5 MB.",
+          "x-widget": "file-upload",
+          "x-upload-config": {
+            "endpoint": "/api/v3/plugins/assets/upload",
+            "plugin_id": "win-celebration",
+            "max_files": 1,
+            "allowed_types": ["image/gif"],
+            "max_size_mb": 5
+          },
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "path": {"type": "string"},
+              "filename": {"type": "string"},
+              "size": {"type": "integer"},
+              "uploaded_at": {"type": "string"}
+            }
+          },
+          "default": []
+        },
+        "win_text": {
+          "type": "string",
+          "description": "Short text overlay when this team wins.",
+          "default": "CUBS WIN!"
+        },
+        "primary_color": {
+          "type": "array",
+          "description": "Team primary color [R, G, B]",
+          "items": {"type": "integer", "minimum": 0, "maximum": 255},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [14, 51, 134]
+        },
+        "secondary_color": {
+          "type": "array",
+          "description": "Team secondary color [R, G, B]",
+          "items": {"type": "integer", "minimum": 0, "maximum": 255},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [204, 52, 51]
+        },
+        "animation_style": {
+          "type": "string",
+          "description": "Programmatic animation style when no GIF is loaded: 'waving_flag', 'skull_crossbones', or 'team_logo'.",
+          "enum": ["waving_flag", "skull_crossbones", "team_logo"],
+          "default": "team_logo"
+        }
+      },
+      "additionalProperties": false
+    },
+    "team3": {
+      "type": "object",
+      "description": "Team 3 — optional third team to monitor",
+      "properties": {
+        "abbreviation": {
+          "type": "string",
+          "description": "ESPN team abbreviation. Leave blank to disable this slot.",
+          "default": ""
+        },
+        "sport": {
+          "type": "string",
+          "description": "Sport / league",
+          "enum": ["mlb", "nfl", "nba", "nhl"],
+          "default": "mlb"
+        },
+        "gif_file": {
+          "type": "string",
+          "description": "Animated GIF filename.",
+          "default": "celebrate.gif"
+        },
+        "gif_upload": {
+          "type": "array",
+          "title": "Upload Custom GIF",
+          "description": "Upload a custom animated GIF to use instead of gif_file (overrides gif_file when set). Max 5 MB.",
+          "x-widget": "file-upload",
+          "x-upload-config": {
+            "endpoint": "/api/v3/plugins/assets/upload",
+            "plugin_id": "win-celebration",
+            "max_files": 1,
+            "allowed_types": ["image/gif"],
+            "max_size_mb": 5
+          },
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "path": {"type": "string"},
+              "filename": {"type": "string"},
+              "size": {"type": "integer"},
+              "uploaded_at": {"type": "string"}
+            }
+          },
+          "default": []
+        },
+        "win_text": {
+          "type": "string",
+          "description": "Short text overlay when this team wins.",
+          "default": ""
+        },
+        "primary_color": {
+          "type": "array",
+          "description": "Team primary color [R, G, B]",
+          "items": {"type": "integer", "minimum": 0, "maximum": 255},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [255, 255, 255]
+        },
+        "secondary_color": {
+          "type": "array",
+          "description": "Team secondary color [R, G, B]",
+          "items": {"type": "integer", "minimum": 0, "maximum": 255},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0, 0, 0]
+        },
+        "animation_style": {
+          "type": "string",
+          "description": "Programmatic animation style when no GIF is loaded: 'waving_flag', 'skull_crossbones', or 'team_logo'.",
+          "enum": ["waving_flag", "skull_crossbones", "team_logo"],
+          "default": "team_logo"
+        }
+      },
+      "additionalProperties": false
+    },
+    "team4": {
+      "type": "object",
+      "description": "Team 4 — optional fourth team to monitor",
+      "properties": {
+        "abbreviation": {
+          "type": "string",
+          "description": "ESPN team abbreviation. Leave blank to disable this slot.",
+          "default": ""
+        },
+        "sport": {
+          "type": "string",
+          "description": "Sport / league",
+          "enum": ["mlb", "nfl", "nba", "nhl"],
+          "default": "mlb"
+        },
+        "gif_file": {
+          "type": "string",
+          "description": "Animated GIF filename.",
+          "default": "celebrate.gif"
+        },
+        "gif_upload": {
+          "type": "array",
+          "title": "Upload Custom GIF",
+          "description": "Upload a custom animated GIF to use instead of gif_file (overrides gif_file when set). Max 5 MB.",
+          "x-widget": "file-upload",
+          "x-upload-config": {
+            "endpoint": "/api/v3/plugins/assets/upload",
+            "plugin_id": "win-celebration",
+            "max_files": 1,
+            "allowed_types": ["image/gif"],
+            "max_size_mb": 5
+          },
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "path": {"type": "string"},
+              "filename": {"type": "string"},
+              "size": {"type": "integer"},
+              "uploaded_at": {"type": "string"}
+            }
+          },
+          "default": []
+        },
+        "win_text": {
+          "type": "string",
+          "description": "Short text overlay when this team wins.",
+          "default": ""
+        },
+        "primary_color": {
+          "type": "array",
+          "description": "Team primary color [R, G, B]",
+          "items": {"type": "integer", "minimum": 0, "maximum": 255},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [255, 255, 255]
+        },
+        "secondary_color": {
+          "type": "array",
+          "description": "Team secondary color [R, G, B]",
+          "items": {"type": "integer", "minimum": 0, "maximum": 255},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0, 0, 0]
+        },
+        "animation_style": {
+          "type": "string",
+          "description": "Programmatic animation style when no GIF is loaded: 'waving_flag', 'skull_crossbones', or 'team_logo'.",
+          "enum": ["waving_flag", "skull_crossbones", "team_logo"],
+          "default": "team_logo"
+        }
+      },
+      "additionalProperties": false
+    },
+    "team5": {
+      "type": "object",
+      "description": "Team 5 — optional fifth team to monitor",
+      "properties": {
+        "abbreviation": {
+          "type": "string",
+          "description": "ESPN team abbreviation. Leave blank to disable this slot.",
+          "default": ""
+        },
+        "sport": {
+          "type": "string",
+          "description": "Sport / league",
+          "enum": ["mlb", "nfl", "nba", "nhl"],
+          "default": "mlb"
+        },
+        "gif_file": {
+          "type": "string",
+          "description": "Animated GIF filename.",
+          "default": "celebrate.gif"
+        },
+        "gif_upload": {
+          "type": "array",
+          "title": "Upload Custom GIF",
+          "description": "Upload a custom animated GIF to use instead of gif_file (overrides gif_file when set). Max 5 MB.",
+          "x-widget": "file-upload",
+          "x-upload-config": {
+            "endpoint": "/api/v3/plugins/assets/upload",
+            "plugin_id": "win-celebration",
+            "max_files": 1,
+            "allowed_types": ["image/gif"],
+            "max_size_mb": 5
+          },
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "path": {"type": "string"},
+              "filename": {"type": "string"},
+              "size": {"type": "integer"},
+              "uploaded_at": {"type": "string"}
+            }
+          },
+          "default": []
+        },
+        "win_text": {
+          "type": "string",
+          "description": "Short text overlay when this team wins.",
+          "default": ""
+        },
+        "primary_color": {
+          "type": "array",
+          "description": "Team primary color [R, G, B]",
+          "items": {"type": "integer", "minimum": 0, "maximum": 255},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [255, 255, 255]
+        },
+        "secondary_color": {
+          "type": "array",
+          "description": "Team secondary color [R, G, B]",
+          "items": {"type": "integer", "minimum": 0, "maximum": 255},
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0, 0, 0]
+        },
+        "animation_style": {
+          "type": "string",
+          "description": "Programmatic animation style when no GIF is loaded: 'waving_flag', 'skull_crossbones', or 'team_logo'.",
+          "enum": ["waving_flag", "skull_crossbones", "team_logo"],
+          "default": "team_logo"
+        }
+      },
+      "additionalProperties": false
+    },
+    "celebration_hours": {
+      "type": "number",
+      "description": "How many hours to show the celebration after a win",
+      "default": 1.0,
+      "minimum": 0.1,
+      "maximum": 24.0
+    },
+    "team_display_duration": {
+      "type": "integer",
+      "description": "When multiple teams are celebrating, seconds to show each team's animation before rotating to the next",
+      "default": 30,
+      "minimum": 5,
+      "maximum": 300
+    },
+    "display_duration": {
+      "type": "number",
+      "description": "How long (in seconds) to show the plugin per rotation slot while celebrating",
+      "default": 30,
+      "minimum": 5,
+      "maximum": 300
+    },
+    "update_interval": {
+      "type": "number",
+      "description": "How often (in seconds) to poll the ESPN scoreboard API",
+      "default": 300,
+      "minimum": 60,
+      "maximum": 3600
+    },
+    "animation_fps": {
+      "type": "number",
+      "description": "Target FPS for the programmatic fallback animation (GIF frame durations are used when a GIF is loaded)",
+      "default": 12.0,
+      "minimum": 1.0,
+      "maximum": 60.0
+    },
+    "show_score": {
+      "type": "boolean",
+      "description": "Overlay the final score on the display",
+      "default": true
+    },
+    "show_text": {
+      "type": "boolean",
+      "description": "Overlay the win text on the display",
+      "default": true
+    },
+    "font_name": {
+      "type": "string",
+      "description": "Font file to use for text overlays (from assets/fonts directory)",
+      "default": "4x6-font.ttf",
+      "enum": [
+        "4x6-font.ttf",
+        "PressStart2P-Regular.ttf",
+        "tom-thumb.ttf"
+      ]
+    },
+    "font_size": {
+      "type": "integer",
+      "description": "Font size for text overlays",
+      "default": 6,
+      "minimum": 4,
+      "maximum": 12
+    },
+    "live_priority": {
+      "type": "boolean",
+      "description": "Take over the display immediately after a win instead of waiting for the normal rotation slot",
+      "default": true
+    },
+    "transition": {
+      "type": "object",
+      "description": "Transition settings when entering/leaving this plugin",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["redraw", "fade", "slide", "wipe"],
+          "default": "fade"
+        },
+        "speed": {
+          "type": "integer",
+          "description": "Transition speed (1-10)",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "simulate_win": {
+      "type": "boolean",
+      "description": "Simulate a win for testing — activates the celebration immediately. Set back to false to cancel.",
+      "default": false
+    },
+    "simulate_team": {
+      "type": "integer",
+      "description": "Slot number to simulate winning (1 = team1, 2 = team2, … 5 = team5). Use 0 for the first active slot.",
+      "minimum": 0,
+      "maximum": 5,
+      "default": 0
+    }
+  },
+  "additionalProperties": false
+}
