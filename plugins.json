@@ -22,6 +22,127 @@
       "verified": false,
       "screenshot": "",
       "latest_version": "1.4.0"
+    },
+    {
+      "id": "pga-tour-leaderboard",
+      "name": "PGA Tour Leaderboard",
+      "description": "Displays the top 10 players from the current PGA Tour leaderboard using ESPN data with horizontal scrolling. Shows PGA Tour logo, tournament information, holes completed, and indicates active players with asterisks. Falls back to showing top 5 from the most recent completed tournament when no current tournament is available.",
+      "author": "sarjent",
+      "category": "sports",
+      "tags": [
+        "golf",
+        "pga",
+        "sports",
+        "leaderboard",
+        "espn"
+      ],
+      "repo": "https://github.com/sarjent/ledmatrix-golf",
+      "branch": "main",
+      "plugin_path": "",
+      "stars": 0,
+      "downloads": 0,
+      "last_updated": "2026-05-11",
+      "verified": false,
+      "screenshot": "",
+      "latest_version": "1.6.1"
+    },
+    {
+      "id": "vegassportsticker",
+      "name": "Vegas Sports Ticker",
+      "description": "Displays scrolling odds and betting lines for upcoming games across multiple sports leagues. Features Vegas mode (panel layout with integrated odds) and Classic mode (original ticker format).",
+      "author": "sarjent",
+      "category": "sports",
+      "tags": [
+        "odds",
+        "betting",
+        "vegas",
+        "sports",
+        "nfl",
+        "nba",
+        "mlb",
+        "ncaa",
+        "scrolling"
+      ],
+      "repo": "https://github.com/sarjent/ledmatrix-vegasticker",
+      "branch": "main",
+      "plugin_path": "",
+      "stars": 0,
+      "downloads": 0,
+      "last_updated": "2026-03-28",
+      "verified": false,
+      "screenshot": "",
+      "latest_version": "1.0.0"
+    },
+    {
+      "id": "win-celebration",
+      "name": "Win Celebration",
+      "description": "Displays animated GIF celebrations when configured teams win. Supports multiple teams with per-team GIFs, brand colors, and custom win messages. Works with MLB, NFL, NBA, and NHL via the ESPN public API.",
+      "author": "sarjent",
+      "category": "sports",
+      "tags": [
+        "sports",
+        "celebration",
+        "animation",
+        "win",
+        "mlb",
+        "nfl",
+        "nba",
+        "nhl",
+        "gif"
+      ],
+      "repo": "https://github.com/sarjent/ledmatrix-win-celebration",
+      "branch": "main",
+      "plugin_path": "",
+      "stars": 0,
+      "downloads": 0,
+      "last_updated": "2026-03-08",
+      "verified": false,
+      "screenshot": "",
+      "latest_version": "1.4.4"
+    },
+    {
+      "id": "plugin-sync",
+      "name": "Plugin Sync",
+      "description": "Keeps plugins and configuration in sync across multiple LEDMatrix Pis over HTTP. Install on the source Pi with server_mode: true and on each destination Pi with source_host pointing to the source.",
+      "author": "sarjent",
+      "category": "system",
+      "tags": [
+        "sync",
+        "system",
+        "admin"
+      ],
+      "repo": "https://github.com/sarjent/ledmatrix-plugin-sync",
+      "branch": "master",
+      "plugin_path": "",
+      "stars": 0,
+      "downloads": 0,
+      "last_updated": "2026-05-11",
+      "verified": false,
+      "screenshot": "",
+      "latest_version": "2.0.2"
+    },
+    {
+      "id": "ledmatrix-stocks",
+      "name": "Stock & Crypto Ticker",
+      "description": "Displays scrolling stock tickers with prices, changes, and optional charts for stocks and cryptocurrencies.",
+      "author": "sarjent",
+      "category": "finance",
+      "tags": [
+        "stocks",
+        "crypto",
+        "finance",
+        "ticker",
+        "scrolling"
+      ],
+      "repo": "https://github.com/sarjent/ledmatrix-stocks",
+      "branch": "main",
+      "plugin_path": "",
+      "stars": 0,
+      "downloads": 0,
+      "last_updated": "2026-03-02",
+      "verified": false,
+      "screenshot": "",
+      "latest_version": "2.0.3"
     }
   ]
 }
