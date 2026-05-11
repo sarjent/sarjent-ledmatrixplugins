@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Plugin Sync Configuration",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "Enable or disable the plugin",
+      "default": true
+    },
+    "display_duration": {
+      "type": "number",
+      "description": "Display duration in seconds. Set to 0.1 — the display() method is a no-op so the matrix is unaffected.",
+      "default": 0.1,
+      "minimum": 0.1
+    },
+    "server_mode": {
+      "type": "boolean",
+      "description": "Set to true on the source Pi to serve plugins and config over HTTP. Set to false (default) on all destination Pi's that pull from the source.",
+      "default": false
+    },
+    "server_port": {
+      "type": "integer",
+      "description": "Port the sync server listens on (server mode) or connects to (destination mode)",
+      "default": 5001,
+      "minimum": 1024,
+      "maximum": 65535
+    },
+    "sync_token": {
+      "type": "string",
+      "description": "Optional shared secret for basic auth. Must be identical on the source and all destinations. Leave empty to disable (local network only).",
+      "default": ""
+    },
+    "source_host": {
+      "type": "string",
+      "description": "Hostname or IP of the source Pi (destination mode only)",
+      "default": ""
+    },
+    "source_port": {
+      "type": "integer",
+      "description": "Port of the sync server on the source Pi (destination mode only)",
+      "default": 5001,
+      "minimum": 1024,
+      "maximum": 65535
+    },
+    "sync_plugins": {
+      "type": "boolean",
+      "description": "Sync the plugins/ directory from source",
+      "default": true
+    },
+    "sync_config": {
+      "type": "boolean",
+      "description": "Sync plugin configuration sections from source config.json. Hardware settings, schedule, timezone, and other Pi-specific keys are always preserved locally.",
+      "default": true
+    },
+    "sync_secrets": {
+      "type": "boolean",
+      "description": "Sync config_secrets.json (API keys) from source",
+      "default": false
+    },
+    "sync_frequency_hours": {
+      "type": "number",
+      "description": "Hours between scheduled syncs",
+      "default": 24,
+      "enum": [1, 6, 12, 24, 48, 168]
+    },
+    "dry_run": {
+      "type": "boolean",
+      "description": "Log what would be synced without making any changes",
+      "default": false
+    },
+    "auto_restart": {
+      "type": "boolean",
+      "description": "Automatically restart the display service when changes are detected after a sync",
+      "default": true
+    },
+    "display_service_name": {
+      "type": "string",
+      "description": "Name of the systemd service to restart when changes are detected",
+      "default": "ledmatrix.service"
+    },
+    "preserve_local_keys": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Additional top-level config.json keys to always keep from local and never overwrite from source. The following are always preserved regardless: display, schedule, dim_schedule, timezone, location, web_display_autostart, plugin_system, plugin-sync.",
+      "default": []
+    }
+  },
+  "additionalProperties": false
+}
