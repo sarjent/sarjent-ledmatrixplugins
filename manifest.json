@@ -1,0 +1,31 @@
+{
+  "id": "vegassportsticker",
+  "name": "Vegas Sports Ticker",
+  "version": "1.0.0",
+  "description": "Displays scrolling odds and betting lines for upcoming games across multiple sports leagues. Features Vegas mode (panel layout with integrated odds) and Classic mode (original ticker format).",
+  "author": "sarjent",
+  "category": "sports",
+  "tags": ["odds", "betting", "vegas", "sports", "nfl", "nba", "mlb", "ncaa", "scrolling"],
+  "repo": "https://github.com/sarjent/ledmatrix-vegasticker",
+  "branch": "main",
+  "plugin_path": "",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "ledmatrix_min": "2.0.0",
+      "released": "2026-03-28"
+    }
+  ],
+  "stars": 0,
+  "downloads": 0,
+  "last_updated": "2026-03-28",
+  "verified": true,
+  "screenshot": "",
+  "display_modes": [
+    "vegassportsticker"
+  ],
+  "class_name": "VegasSportsTickerPlugin",
+  "dependencies": {
+    "managers": []
+  }
+}
