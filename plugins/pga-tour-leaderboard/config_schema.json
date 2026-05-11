@@ -1,0 +1,152 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "PGA Tour Leaderboard Plugin Configuration",
+  "description": "Configuration for the PGA Tour Leaderboard plugin",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "Enable or disable the plugin",
+      "default": true
+    },
+    "display_duration": {
+      "type": "number",
+      "description": "How long to display the leaderboard (in seconds)",
+      "default": 15,
+      "minimum": 5,
+      "maximum": 300
+    },
+    "update_interval": {
+      "type": "number",
+      "description": "How often to refresh data from ESPN (in seconds)",
+      "default": 600,
+      "minimum": 60,
+      "maximum": 3600
+    },
+    "max_players": {
+      "type": "integer",
+      "description": "Maximum number of players to display",
+      "default": 10,
+      "minimum": 1,
+      "maximum": 20
+    },
+    "fallback_players": {
+      "type": "integer",
+      "description": "Number of players to show from previous tournament when no current tournament is available",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 20
+    },
+    "tournament_date_range": {
+      "type": "integer",
+      "description": "Number of days to look ahead for tournaments (from today)",
+      "default": 7,
+      "minimum": 0,
+      "maximum": 30
+    },
+    "font_size": {
+      "type": "integer",
+      "description": "Font size for player names and scores",
+      "default": 6,
+      "minimum": 4,
+      "maximum": 12
+    },
+    "font_name": {
+      "type": "string",
+      "description": "Font file to use (from assets/fonts directory)",
+      "default": "4x6-font.ttf",
+      "enum": [
+        "4x6-font.ttf",
+        "PressStart2P-Regular.ttf",
+        "tom-thumb.ttf"
+      ]
+    },
+    "text_color": {
+      "type": "object",
+      "description": "RGB color for text",
+      "properties": {
+        "r": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 255
+        },
+        "g": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 255
+        },
+        "b": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 255
+        }
+      },
+      "default": {
+        "r": 255,
+        "g": 255,
+        "b": 255
+      }
+    },
+    "highlight_color": {
+      "type": "object",
+      "description": "RGB color for highlighting (e.g., leader or top 3)",
+      "properties": {
+        "r": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 255
+        },
+        "g": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 215
+        },
+        "b": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 0
+        }
+      },
+      "default": {
+        "r": 255,
+        "g": 215,
+        "b": 0
+      }
+    },
+    "transition": {
+      "type": "object",
+      "description": "Transition settings",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["redraw", "fade", "slide", "wipe"],
+          "default": "redraw"
+        },
+        "speed": {
+          "type": "integer",
+          "description": "Transition speed (1-10)",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 10
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "vegas_mode": {
+      "type": "string",
+      "description": "Override how this plugin appears in Vegas scroll mode. 'scroll' = individual player entries scroll through the stream (default), 'fixed' = entire display scrolls by as one block, 'static' = scroll pauses while plugin displays for its duration.",
+      "enum": ["scroll", "fixed", "static"],
+      "default": "scroll"
+    }
+  },
+  "additionalProperties": false
+}
