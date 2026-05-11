@@ -1,0 +1,27 @@
+{
+  "plugins": [
+    {
+      "id": "nfl-draft",
+      "name": "NFL Draft",
+      "description": "Displays projected NFL draft picks from ESPN with live draft tracking support during the annual NFL Draft event. Includes simulate_live mode to replay a completed draft using real ESPN core API data. Shows team logos, player names, positions, and pick numbers in a scrolling display.",
+      "author": "sarjent",
+      "category": "sports",
+      "tags": [
+        "nfl",
+        "draft",
+        "football",
+        "sports",
+        "espn"
+      ],
+      "repo": "https://github.com/sarjent/ledmatrix-nfl-draft",
+      "branch": "main",
+      "plugin_path": "",
+      "stars": 0,
+      "downloads": 0,
+      "last_updated": "2026-05-11",
+      "verified": false,
+      "screenshot": "",
+      "latest_version": "1.4.0"
+    }
+  ]
+}
