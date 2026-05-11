@@ -1,0 +1,3 @@
+I want to make a plugin for the LEDMatrix project that shows the top ten players from the current pga tour leaderboard using data from espn.  I want it to only show information from the current tournament that matches todays date plus 7 days.  The data should refresh every 10 minutes by default and also be user customizable up to 60 minutes. 
+
+the font size, color and font should be user configurable.

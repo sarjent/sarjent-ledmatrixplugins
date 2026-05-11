@@ -1,0 +1,53 @@
+# Example configuration for PGA Tour Leaderboard Plugin
+# Copy this to your LEDMatrix config.yaml under the 'plugins' section
+
+plugins:
+  pga-tour-leaderboard:
+    # Enable/disable the plugin
+    enabled: true
+
+    # Display settings
+    display_duration: 15  # seconds to show leaderboard
+
+    # Data refresh settings
+    update_interval: 600  # seconds (10 minutes)
+
+    # Leaderboard settings
+    max_players: 10  # number of players to show (1-20)
+    fallback_players: 5  # players from previous tournament to show as fallback (1-20)
+    tournament_date_range: 7  # days ahead to search for tournaments (0-30)
+
+    # Font settings
+    font_size: 6  # pixel size (4-12)
+    font_name: "4x6-font.ttf"  # font file name
+
+    # Color settings (RGB 0-255)
+    text_color:
+      r: 255  # white
+      g: 255
+      b: 255
+
+    highlight_color:
+      r: 255  # gold (for top 3 players)
+      g: 215
+      b: 0
+
+    # Transition settings (optional)
+    transition:
+      type: "redraw"  # redraw, fade, slide, wipe
+      speed: 2  # 1-10
+      enabled: true
+
+# Alternative color schemes you might like:
+#
+# Green text with yellow highlight:
+# text_color: {r: 0, g: 255, b: 0}
+# highlight_color: {r: 255, g: 255, b: 0}
+#
+# Blue text with white highlight:
+# text_color: {r: 100, g: 150, b: 255}
+# highlight_color: {r: 255, g: 255, b: 255}
+#
+# Classic green (golf course):
+# text_color: {r: 34, g: 139, b: 34}
+# highlight_color: {r: 255, g: 215, b: 0}

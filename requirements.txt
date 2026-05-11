@@ -1,0 +1,10 @@
+# PGA Tour Leaderboard Plugin Dependencies
+
+# HTTP requests and API access
+requests>=2.31.0
+
+# Image processing (provided by LEDMatrix core, but listed for clarity)
+Pillow>=10.3.0
+
+# Date/time handling (built-in, but noting for completeness)
+# python-dateutil>=2.8.2  # If advanced date parsing needed
