@@ -1592,13 +1592,10 @@ class NFLDraftPlugin(BasePlugin):
         if self.last_update_time is not None and current_time - self.last_update_time < refresh_interval:
             return
 
-        # Dispatch to leaders / injuries updaters for non-draft modes
-        if self.plugin_id == "nfl_leaders_ticker":
+        # Always refresh off-season data when active; each method has its own throttle
+        if self._is_leaders_active():
             self._update_leaders()
-            return
-        if self.plugin_id == "nfl_injuries_ticker":
             self._update_injuries()
-            return
 
         self.logger.info(f"Updating NFL Draft data (live={self.is_draft_live}, year={self.draft_year}, simulate={self.simulate_live})")
 
@@ -1642,7 +1639,7 @@ class NFLDraftPlugin(BasePlugin):
         except Exception as e:
             self.logger.error(f"Error updating draft data: {e}", exc_info=True)
 
-    def display(self, force_clear: bool = False) -> None:
+    def display(self, force_clear: bool = False, display_mode: str = None) -> None:
         """
         Render the draft picks to the LED matrix.
 
@@ -1650,12 +1647,14 @@ class NFLDraftPlugin(BasePlugin):
 
         Args:
             force_clear: If True, clear display before rendering
+            display_mode: Active display mode name passed by the display controller
         """
         if force_clear:
             self.display_manager.clear()
 
         # Leaders / injuries modes share the same scroll render path
-        if self.plugin_id in ("nfl_leaders_ticker", "nfl_injuries_ticker"):
+        _active_mode = display_mode or ""
+        if _active_mode in ("nfl_leaders_ticker", "nfl_injuries_ticker"):
             if not self._is_leaders_active():
                 self._display_blank()
                 return
@@ -1782,34 +1781,33 @@ class NFLDraftPlugin(BasePlugin):
         giving smoother integration than handing it the pre-built scroll image.
         Returns None if no picks are loaded yet.
         """
-        # Leaders / injuries modes return their pre-built item lists
-        if self.plugin_id == "nfl_leaders_ticker":
-            if not self._is_leaders_active() or not self.leaders_data:
-                return None
-            images = self._build_leaders_content()
-            return images if images else None
-
-        if self.plugin_id == "nfl_injuries_ticker":
-            if not self._is_leaders_active() or not self.injuries_data:
-                return None
-            images = self._build_injury_content()
-            return images if images else None
-
         with self._state_lock:
             picks = list(self.draft_picks)
             status = self.draft_status
 
-        if not picks:
-            return None
+        # Try draft content first
+        if picks:
+            if not (status == "complete" and not self._is_post_draft_window(status)):
+                if not (status not in ("live", "complete", "simulate") and self._is_off_season()):
+                    images = self._build_content_items(picks=picks)
+                    if images:
+                        return images
 
-        # Off-season / expired post-draft window: drop out of rotation entirely
-        if status == "complete" and not self._is_post_draft_window(status):
-            return None
-        if status not in ("live", "complete", "simulate") and self._is_off_season():
-            return None
+        # No draft content — fall back to off-season leaders + injuries
+        if self._is_leaders_active():
+            content = []
+            if self.leaders_data:
+                imgs = self._build_leaders_content()
+                if imgs:
+                    content.extend(imgs)
+            if self.injuries_data:
+                imgs = self._build_injury_content()
+                if imgs:
+                    content.extend(imgs)
+            if content:
+                return content
 
-        images = self._build_content_items(picks=picks)
-        return images if images else None
+        return None
 
     def has_live_priority(self) -> bool:
         """Check if live priority is enabled."""
