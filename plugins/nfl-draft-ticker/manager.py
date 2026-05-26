@@ -197,8 +197,8 @@ class NFLDraftPlugin(BasePlugin):
 
         # Injuries mode settings
         self.injury_positions = self.config.get("injury_positions", ["QB", "RB", "WR", "TE", "K"])
-        self.injury_statuses = self.config.get("injury_statuses", ["Out", "Questionable", "Doubtful"])
-        self.show_ota_active = self.config.get("show_ota_active", True)
+        self.injury_statuses = self.config.get("injury_statuses", ["Out", "Doubtful", "Injured Reserve"])
+        self.show_ota_active = self.config.get("show_ota_active", False)
         self.injuries_refresh_interval = self.config.get("injuries_refresh_interval", 3600)
 
     def _load_font(self, size: int) -> ImageFont.ImageFont:
@@ -1163,7 +1163,7 @@ class NFLDraftPlugin(BasePlugin):
         return datetime(year, 2, 15, tzinfo=timezone.utc)
 
     def _is_leaders_active(self) -> bool:
-        """True when leaders/injuries modes should produce content.
+        """True when the injuries mode should produce content.
 
         Active window: May through 2 weeks after the Super Bowl ends.
         Dark window: post-cutoff February through April (draft season).
@@ -1175,6 +1175,19 @@ class NFLDraftPlugin(BasePlugin):
         # Feb and early March: active until 2 weeks post-Super Bowl
         cutoff = self._get_superbowl_end_date() + timedelta(weeks=2)
         return now <= cutoff
+
+    def _is_leaders_season_active(self) -> bool:
+        """True only during the NFL regular/post season (Sep–Jan + 2 wks post-SB).
+
+        Leaders pull week-stat data which is meaningless in the offseason.
+        """
+        now = datetime.now(timezone.utc)
+        if now.month >= 9 or now.month == 1:
+            return True
+        if now.month == 2:
+            cutoff = self._get_superbowl_end_date() + timedelta(weeks=2)
+            return now <= cutoff
+        return False
 
     # -------------------------------------------------------------------------
     # Data fetchers — leaders / injuries
@@ -1269,9 +1282,9 @@ class NFLDraftPlugin(BasePlugin):
         players: List[Dict[str, Any]] = []
 
         for team_entry in data.get("injuries", []):
-            team_abbr = team_entry.get("team", {}).get("abbreviation", "")
             for injury in team_entry.get("injuries", []):
                 athlete = injury.get("athlete", {})
+                team_abbr = athlete.get("team", {}).get("abbreviation", "")
                 status = injury.get("status", "")
 
                 pos_obj = athlete.get("position", {})
@@ -1388,10 +1401,10 @@ class NFLDraftPlugin(BasePlugin):
                   stat_line, font=self.detail_font, fill=(255, 255, 255))
         return img
 
-    def _create_injury_item(self, player: Dict[str, Any]) -> Optional[Image.Image]:
-        """Render a single injury/OTA card: [LOGO] Name  POS / STATUS · comment."""
+    def _create_injury_item(self, player: Dict[str, Any], show_logo: bool = True) -> Optional[Image.Image]:
+        """Render a single injury card: [LOGO] Name  POS / STATUS · comment."""
         team_abbr = player.get("team_abbr", "").upper()
-        logo = self._load_team_logo(team_abbr)
+        logo = self._load_team_logo(team_abbr) if show_logo else None
         logo_width = logo.width if logo else 0
 
         name_line = player.get("name", "")
@@ -1475,6 +1488,7 @@ class NFLDraftPlugin(BasePlugin):
             if not group:
                 continue
             group.sort(key=lambda p: p.get("stat_value", 0), reverse=True)
+            group = group[:3]
             sub_label = self._STAT_LABEL.get(stat_key, stat_key.upper())
             items.append(self._create_section_header(sub_label, (100, 180, 255)))
             for player in group:
@@ -1485,7 +1499,7 @@ class NFLDraftPlugin(BasePlugin):
         return items
 
     def _build_injury_content(self) -> List[Image.Image]:
-        """Build ordered scroll items for the injury/OTA ticker."""
+        """Build ordered scroll items for the injury ticker, grouped by team."""
         players = self.injuries_data
         if not players:
             return []
@@ -1493,15 +1507,31 @@ class NFLDraftPlugin(BasePlugin):
         items: List[Image.Image] = [
             self._create_section_header("NFL INJURIES", (255, 100, 0))
         ]
+
+        # Group players by team, preserving order of first appearance
+        teams_order: List[str] = []
+        by_team: Dict[str, List[Dict[str, Any]]] = {}
         for player in players:
-            img = self._create_injury_item(player)
-            if img:
-                items.append(img)
+            abbr = player.get("team_abbr", "")
+            if abbr not in by_team:
+                by_team[abbr] = []
+                teams_order.append(abbr)
+            by_team[abbr].append(player)
+
+        for team_abbr in teams_order:
+            logo = self._load_team_logo(team_abbr)
+            if logo:
+                items.append(logo)
+            for player in by_team[team_abbr]:
+                img = self._create_injury_item(player, show_logo=False)
+                if img:
+                    items.append(img)
+
         return items
 
     def _create_leaders_scroll_image(self) -> None:
         """Build and cache the leaders scrolling image."""
-        if not self._is_leaders_active():
+        if not self._is_leaders_season_active():
             self.scroll_helper.clear_cache()
             return
         content = self._build_leaders_content()
@@ -1532,7 +1562,7 @@ class NFLDraftPlugin(BasePlugin):
                 and current_time - self.last_leaders_update < self.leaders_refresh_interval):
             return
 
-        if not self._is_leaders_active():
+        if not self._is_leaders_season_active():
             self.scroll_helper.clear_cache()
             return
 
@@ -1592,9 +1622,10 @@ class NFLDraftPlugin(BasePlugin):
         if self.last_update_time is not None and current_time - self.last_update_time < refresh_interval:
             return
 
-        # Always refresh off-season data when active; each method has its own throttle
-        if self._is_leaders_active():
+        # Refresh leaders only during the season; injuries year-round when active
+        if self._is_leaders_season_active():
             self._update_leaders()
+        if self._is_leaders_active():
             self._update_injuries()
 
         self.logger.info(f"Updating NFL Draft data (live={self.is_draft_live}, year={self.draft_year}, simulate={self.simulate_live})")
@@ -1654,10 +1685,15 @@ class NFLDraftPlugin(BasePlugin):
 
         # Leaders / injuries modes share the same scroll render path
         _active_mode = display_mode or ""
-        if _active_mode in ("nfl_leaders_ticker", "nfl_injuries_ticker"):
+        if _active_mode == "nfl_leaders_ticker":
+            if not self._is_leaders_season_active():
+                self._display_blank()
+                return
+        elif _active_mode == "nfl_injuries_ticker":
             if not self._is_leaders_active():
                 self._display_blank()
                 return
+        if _active_mode in ("nfl_leaders_ticker", "nfl_injuries_ticker"):
             try:
                 self.scroll_helper.update_scroll_position()
                 visible = self.scroll_helper.get_visible_portion()
@@ -1794,18 +1830,17 @@ class NFLDraftPlugin(BasePlugin):
                         return images
 
         # No draft content — fall back to off-season leaders + injuries
-        if self._is_leaders_active():
-            content = []
-            if self.leaders_data:
-                imgs = self._build_leaders_content()
-                if imgs:
-                    content.extend(imgs)
-            if self.injuries_data:
-                imgs = self._build_injury_content()
-                if imgs:
-                    content.extend(imgs)
-            if content:
-                return content
+        content = []
+        if self._is_leaders_season_active() and self.leaders_data:
+            imgs = self._build_leaders_content()
+            if imgs:
+                content.extend(imgs)
+        if self._is_leaders_active() and self.injuries_data:
+            imgs = self._build_injury_content()
+            if imgs:
+                content.extend(imgs)
+        if content:
+            return content
 
         return None
 
