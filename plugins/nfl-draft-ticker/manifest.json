@@ -1,9 +1,9 @@
 {
   "id": "nfl-draft-ticker",
   "name": "NFL Draft Ticker",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "author": "sarjent",
-  "description": "Displays projected and live NFL Draft Ticker picks from ESPN with live draft tracking support during the annual NFL Draft event. Includes simulate_live mode to replay a completed draft using real ESPN core API data. Shows team logos, player names, positions, and pick numbers in a scrolling display.",
+  "description": "Displays projected and live NFL Draft Ticker picks from ESPN with live draft tracking support during the annual NFL Draft event. Includes simulate_live mode to replay a completed draft using real ESPN core API data. Shows team logos, player names, positions, and pick numbers in a scrolling display. Off-season modes display weekly stat leaders and injury/OTA reports year-round.",
   "entry_point": "manager.py",
   "class_name": "NFLDraftPlugin",
   "category": "sports",
@@ -16,7 +16,9 @@
     "espn"
   ],
   "display_modes": [
-    "nfl_draft_ticker"
+    "nfl_draft_ticker",
+    "nfl_leaders_ticker",
+    "nfl_injuries_ticker"
   ],
   "update_interval": 300,
   "default_duration": 60,
@@ -25,6 +27,11 @@
   ],
   "icon": "fas fa-football-ball",
   "versions": [
+    {
+      "version": "1.5.0",
+      "released": "2026-05-26",
+      "ledmatrix_min": "2.0.0"
+    },
     {
       "version": "1.4.2",
       "released": "2026-05-11",

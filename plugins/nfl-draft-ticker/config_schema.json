@@ -246,6 +246,55 @@
       "default": 7,
       "minimum": 1,
       "maximum": 30
+    },
+    "leaders_stat_types": {
+      "type": "array",
+      "description": "Which stat categories to show in the leaders ticker. Active May through 2 weeks post-Super Bowl.",
+      "items": {
+        "type": "string",
+        "enum": ["passing", "rushing", "receiving"]
+      },
+      "default": ["passing", "rushing", "receiving"],
+      "uniqueItems": true
+    },
+    "leaders_refresh_interval": {
+      "type": "integer",
+      "description": "How often to refresh leaders data in seconds.",
+      "default": 3600,
+      "minimum": 300,
+      "maximum": 86400
+    },
+    "injury_positions": {
+      "type": "array",
+      "description": "Only show injury/OTA entries for these positions. Leave empty to show all positions.",
+      "items": {
+        "type": "string",
+        "enum": ["QB", "RB", "WR", "TE", "K", "OL", "DL", "LB", "DB", "S", "CB"]
+      },
+      "default": ["QB", "RB", "WR", "TE", "K"],
+      "uniqueItems": true
+    },
+    "injury_statuses": {
+      "type": "array",
+      "description": "Which injury statuses to include in the injury report.",
+      "items": {
+        "type": "string",
+        "enum": ["Out", "Questionable", "Doubtful", "Injured Reserve"]
+      },
+      "default": ["Out", "Questionable", "Doubtful"],
+      "uniqueItems": true
+    },
+    "show_ota_active": {
+      "type": "boolean",
+      "description": "During the off-season, also show Active players who have an injury note (OTA participation reports, contract news, etc.).",
+      "default": true
+    },
+    "injuries_refresh_interval": {
+      "type": "integer",
+      "description": "How often to refresh injury data in seconds.",
+      "default": 3600,
+      "minimum": 300,
+      "maximum": 86400
     }
   },
   "additionalProperties": false

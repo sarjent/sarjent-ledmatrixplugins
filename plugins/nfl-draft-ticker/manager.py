@@ -19,7 +19,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.request import urlopen, Request
@@ -76,7 +76,7 @@ class NFLDraftPlugin(BasePlugin):
         # Load configuration
         self._load_config()
 
-        # Data storage
+        # Data storage — draft mode
         self.draft_picks: List[Dict[str, Any]] = []
         self.is_draft_live = False
         self.draft_status = "unknown"  # "pre", "live", "complete"
@@ -84,6 +84,12 @@ class NFLDraftPlugin(BasePlugin):
         self.last_update_time: Optional[float] = None
         self.last_live_check_time: Optional[float] = None
         self._state_lock = threading.Lock()
+
+        # Data storage — leaders / injuries modes
+        self.leaders_data: List[Dict[str, Any]] = []
+        self.injuries_data: List[Dict[str, Any]] = []
+        self.last_leaders_update: Optional[float] = None
+        self.last_injuries_update: Optional[float] = None
 
         # Font loading - separate sizes for player name vs details
         self.player_name_font = self._load_font(self.player_name_font_size)
@@ -182,6 +188,18 @@ class NFLDraftPlugin(BasePlugin):
         self.display_rounds = self.config.get("display_rounds", 3)
         self.post_draft_days = self.config.get("post_draft_days", 7)
         self.post_draft_show = self.config.get("post_draft_show", "both")
+
+        # Leaders mode settings
+        _stat_map = {"passing": "passingYards", "rushing": "rushingYards", "receiving": "receivingYards"}
+        _raw_types = self.config.get("leaders_stat_types", ["passing", "rushing", "receiving"])
+        self.leaders_stat_types = [_stat_map[t] for t in _raw_types if t in _stat_map]
+        self.leaders_refresh_interval = self.config.get("leaders_refresh_interval", 3600)
+
+        # Injuries mode settings
+        self.injury_positions = self.config.get("injury_positions", ["QB", "RB", "WR", "TE", "K"])
+        self.injury_statuses = self.config.get("injury_statuses", ["Out", "Questionable", "Doubtful"])
+        self.show_ota_active = self.config.get("show_ota_active", True)
+        self.injuries_refresh_interval = self.config.get("injuries_refresh_interval", 3600)
 
     def _load_font(self, size: int) -> ImageFont.ImageFont:
         """Load configured font at specified size."""
@@ -1118,6 +1136,435 @@ class NFLDraftPlugin(BasePlugin):
             self.logger.error(f"Error loading NFL Draft logo: {e}")
             return None
 
+    # -------------------------------------------------------------------------
+    # Leaders / injuries season gating
+    # -------------------------------------------------------------------------
+
+    def _get_superbowl_end_date(self) -> datetime:
+        """Return the end of Super Bowl week for the most recently completed season.
+
+        Queries ESPN postseason types/3/weeks/5 which is always labelled
+        'Super Bowl' and carries startDate/endDate.  Falls back to Feb 15
+        of the current year if the fetch fails.
+        """
+        year = datetime.now().year
+        for yr in (year, year - 1):
+            url = (
+                f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+                f"/seasons/{yr}/types/3/weeks/5"
+            )
+            data = self.api_helper.get(url, cache_key=f"nfl_sb_end_{yr}", cache_ttl=86400)
+            end_str = (data or {}).get("endDate", "")
+            if end_str:
+                try:
+                    return datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                except ValueError:
+                    pass
+        return datetime(year, 2, 15, tzinfo=timezone.utc)
+
+    def _is_leaders_active(self) -> bool:
+        """True when leaders/injuries modes should produce content.
+
+        Active window: May through 2 weeks after the Super Bowl ends.
+        Dark window: post-cutoff February through April (draft season).
+        """
+        now = datetime.now(timezone.utc)
+        # May through January: always active
+        if now.month >= 5 or now.month == 1:
+            return True
+        # Feb and early March: active until 2 weeks post-Super Bowl
+        cutoff = self._get_superbowl_end_date() + timedelta(weeks=2)
+        return now <= cutoff
+
+    # -------------------------------------------------------------------------
+    # Data fetchers — leaders / injuries
+    # -------------------------------------------------------------------------
+
+    def _get_leaders_url_params(self):
+        """Return (season_year, week_or_None) for the most relevant scoreboard."""
+        now = datetime.now()
+        month, year = now.month, now.year
+        if month >= 9:          # Sep-Dec: current regular season, auto week
+            return year, None
+        elif month == 1:        # January: current season = prior calendar year
+            return year - 1, None
+        else:                   # Feb-Aug: prior season week 18 as season recap
+            return year - 1, 18
+
+    def _fetch_weekly_leaders(self) -> List[Dict[str, Any]]:
+        """Fetch NFL game stat leaders from ESPN scoreboard."""
+        season_year, week = self._get_leaders_url_params()
+        week_tag = str(week) if week else "current"
+        cache_key = f"nfl_leaders_{season_year}_{week_tag}"
+
+        # During the active season refresh more aggressively
+        now = datetime.now()
+        cache_ttl = self.leaders_refresh_interval if now.month not in range(9, 13) else 300
+
+        url = (
+            f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+            f"?seasontype=2&dates={season_year}"
+        )
+        if week:
+            url += f"&week={week}"
+
+        data = self.api_helper.get(url, cache_key=cache_key, cache_ttl=cache_ttl)
+        if not data:
+            return []
+
+        leaders: List[Dict[str, Any]] = []
+        week_label = ""
+
+        for event in data.get("events", []):
+            if not week_label:
+                wk = event.get("week", {})
+                if isinstance(wk, dict):
+                    num = wk.get("number", "")
+                    if num:
+                        week_label = f"WK{num}"
+
+            for competition in event.get("competitions", []):
+                for group in competition.get("leaders", []):
+                    stat_name = group.get("name", "")
+                    if stat_name not in self.leaders_stat_types:
+                        continue
+
+                    for entry in group.get("leaders", []):
+                        athlete = entry.get("athlete", {})
+                        team = entry.get("team", {})
+
+                        # Prefer shortName ("P.Mahomes"), build it if absent
+                        name = athlete.get("shortName", "")
+                        if not name:
+                            full = athlete.get("displayName", "")
+                            parts = full.split(" ", 1)
+                            name = f"{parts[0][0]}.{parts[1]}" if len(parts) == 2 else full
+
+                        pos_obj = athlete.get("position", {})
+                        position = pos_obj.get("abbreviation", "") if isinstance(pos_obj, dict) else ""
+
+                        leaders.append({
+                            "name": name,
+                            "position": position,
+                            "team_abbr": team.get("abbreviation", ""),
+                            "stat_line": entry.get("displayValue", ""),
+                            "stat_value": float(entry.get("value", 0)),
+                            "stat_type": stat_name,
+                            "week_label": week_label,
+                            "season_year": season_year,
+                        })
+
+        return leaders
+
+    def _fetch_injury_report(self) -> List[Dict[str, Any]]:
+        """Fetch NFL injury / OTA status report from ESPN."""
+        cache_key = "nfl_injuries"
+        cache_ttl = self.injuries_refresh_interval
+
+        url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries"
+        data = self.api_helper.get(url, cache_key=cache_key, cache_ttl=cache_ttl)
+        if not data:
+            return []
+
+        players: List[Dict[str, Any]] = []
+
+        for team_entry in data.get("injuries", []):
+            team_abbr = team_entry.get("team", {}).get("abbreviation", "")
+            for injury in team_entry.get("injuries", []):
+                athlete = injury.get("athlete", {})
+                status = injury.get("status", "")
+
+                pos_obj = athlete.get("position", {})
+                position = pos_obj.get("abbreviation", "") if isinstance(pos_obj, dict) else ""
+
+                # Position filter
+                if self.injury_positions and position not in self.injury_positions:
+                    continue
+
+                # Status filter: always include configured statuses;
+                # optionally include Active players that have a note (OTA news)
+                include = status in self.injury_statuses
+                if not include and status == "Active" and self.show_ota_active:
+                    comment = injury.get("shortComment", "")
+                    include = bool(comment)
+
+                if not include:
+                    continue
+
+                # Prefer shortName, fall back to displayName
+                name = athlete.get("shortName", "") or athlete.get("displayName", "")
+
+                comment = injury.get("shortComment", "")
+                if len(comment) > 38:
+                    comment = comment[:35] + "..."
+
+                players.append({
+                    "name": name,
+                    "position": position,
+                    "team_abbr": team_abbr,
+                    "status": status,
+                    "comment": comment,
+                })
+
+        return players
+
+    # -------------------------------------------------------------------------
+    # Render helpers — leaders / injuries
+    # -------------------------------------------------------------------------
+
+    # Status → display label + color
+    _STATUS_STYLE: Dict[str, tuple] = {
+        "Out":            ("OUT",   (255,  50,  50)),
+        "Doubtful":       ("DBT",   (255, 130,   0)),
+        "Questionable":   ("Q",     (255, 200,   0)),
+        "Injured Reserve":("IR",    (180,  80, 255)),
+        "Active":         ("OTA",   (100, 220, 100)),
+    }
+
+    _STAT_LABEL: Dict[str, str] = {
+        "passingYards":   "PASSING",
+        "rushingYards":   "RUSHING",
+        "receivingYards": "RECEIVING",
+    }
+
+    def _create_section_header(self, text: str, color: tuple = (255, 200, 0)) -> Image.Image:
+        """Create a scroll header card (same pattern as _create_round_label_item)."""
+        temp = Image.new("RGB", (1, 1))
+        draw = ImageDraw.Draw(temp)
+        try:
+            w = int(draw.textlength(text, font=self.player_name_font))
+        except Exception:
+            bbox = draw.textbbox((0, 0), text, font=self.player_name_font)
+            w = bbox[2] - bbox[0]
+        img = Image.new("RGB", (max(w, 1), self.display_height), (0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        y = (self.display_height - self.player_name_font_size) // 2
+        draw.text((0, y), text, font=self.player_name_font, fill=color)
+        return img
+
+    def _create_leader_item(self, player: Dict[str, Any]) -> Optional[Image.Image]:
+        """Render a single stat-leader card: [LOGO] Name  POS / stat line."""
+        team_abbr = player.get("team_abbr", "").upper()
+        logo = self._load_team_logo(team_abbr)
+        logo_width = logo.width if logo else 0
+
+        name_line = player.get("name", "")
+        pos = player.get("position", "")
+        if pos:
+            name_line = f"{name_line}  {pos}"
+        stat_line = player.get("stat_line", "")
+
+        temp = Image.new("RGB", (1, 1))
+        td = ImageDraw.Draw(temp)
+        try:
+            name_w = int(td.textlength(name_line, font=self.player_name_font))
+            stat_w = int(td.textlength(stat_line, font=self.detail_font))
+        except Exception:
+            nb = td.textbbox((0, 0), name_line, font=self.player_name_font)
+            name_w = nb[2] - nb[0]
+            sb = td.textbbox((0, 0), stat_line, font=self.detail_font)
+            stat_w = sb[2] - sb[0]
+
+        gap = 6
+        text_w = max(name_w, stat_w)
+        total_w = logo_width + gap + text_w
+        img = Image.new("RGB", (max(total_w, 1), self.display_height), (0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        x = 0
+        if logo:
+            ly = (self.display_height - logo.height) // 2
+            if logo.mode == "RGBA":
+                img.paste(logo, (x, ly), logo)
+            else:
+                img.paste(logo, (x, ly))
+            x += logo_width + gap
+
+        line_gap = 2
+        total_text_h = self.player_name_font_size + line_gap + self.detail_font_size
+        top_y = (self.display_height - total_text_h) // 2
+        draw.text((x, top_y), name_line, font=self.player_name_font, fill=self.player_color)
+        draw.text((x, top_y + self.player_name_font_size + line_gap),
+                  stat_line, font=self.detail_font, fill=(255, 255, 255))
+        return img
+
+    def _create_injury_item(self, player: Dict[str, Any]) -> Optional[Image.Image]:
+        """Render a single injury/OTA card: [LOGO] Name  POS / STATUS · comment."""
+        team_abbr = player.get("team_abbr", "").upper()
+        logo = self._load_team_logo(team_abbr)
+        logo_width = logo.width if logo else 0
+
+        name_line = player.get("name", "")
+        pos = player.get("position", "")
+        if pos:
+            name_line = f"{name_line}  {pos}"
+
+        status_raw = player.get("status", "")
+        label, status_color = self._STATUS_STYLE.get(status_raw, (status_raw[:3].upper(), (200, 200, 200)))
+        comment = player.get("comment", "")
+        detail_line = f"{label}" + (f"  {comment}" if comment else "")
+
+        temp = Image.new("RGB", (1, 1))
+        td = ImageDraw.Draw(temp)
+        try:
+            name_w = int(td.textlength(name_line, font=self.player_name_font))
+            detail_w = int(td.textlength(detail_line, font=self.detail_font))
+        except Exception:
+            nb = td.textbbox((0, 0), name_line, font=self.player_name_font)
+            name_w = nb[2] - nb[0]
+            db = td.textbbox((0, 0), detail_line, font=self.detail_font)
+            detail_w = db[2] - db[0]
+
+        gap = 6
+        text_w = max(name_w, detail_w)
+        total_w = logo_width + gap + text_w
+        img = Image.new("RGB", (max(total_w, 1), self.display_height), (0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        x = 0
+        if logo:
+            ly = (self.display_height - logo.height) // 2
+            if logo.mode == "RGBA":
+                img.paste(logo, (x, ly), logo)
+            else:
+                img.paste(logo, (x, ly))
+            x += logo_width + gap
+
+        line_gap = 2
+        total_text_h = self.player_name_font_size + line_gap + self.detail_font_size
+        top_y = (self.display_height - total_text_h) // 2
+        draw.text((x, top_y), name_line, font=self.player_name_font, fill=self.player_color)
+
+        # Draw status label in status color, then rest of detail in white
+        label_text = label
+        rest_text = f"  {comment}" if comment else ""
+        try:
+            label_px = int(draw.textlength(label_text, font=self.detail_font))
+        except Exception:
+            lb = draw.textbbox((0, 0), label_text, font=self.detail_font)
+            label_px = lb[2] - lb[0]
+        detail_y = top_y + self.player_name_font_size + line_gap
+        draw.text((x, detail_y), label_text, font=self.detail_font, fill=status_color)
+        if rest_text:
+            draw.text((x + label_px, detail_y), rest_text, font=self.detail_font, fill=(200, 200, 200))
+
+        return img
+
+    def _build_leaders_content(self) -> List[Image.Image]:
+        """Build ordered scroll items for the leaders ticker."""
+        players = self.leaders_data
+        if not players:
+            return []
+
+        # Determine header label
+        sample = players[0] if players else {}
+        week_label = sample.get("week_label", "")
+        season_year = sample.get("season_year", "")
+        if week_label:
+            header_text = f"NFL {week_label} LEADERS"
+        elif season_year:
+            header_text = f"NFL {season_year} LEADERS"
+        else:
+            header_text = "NFL LEADERS"
+
+        items: List[Image.Image] = [self._create_section_header(header_text, (255, 200, 0))]
+
+        # Group by stat type, each group gets a sub-header and sorted players
+        for stat_key in self.leaders_stat_types:
+            group = [p for p in players if p.get("stat_type") == stat_key]
+            if not group:
+                continue
+            group.sort(key=lambda p: p.get("stat_value", 0), reverse=True)
+            sub_label = self._STAT_LABEL.get(stat_key, stat_key.upper())
+            items.append(self._create_section_header(sub_label, (100, 180, 255)))
+            for player in group:
+                img = self._create_leader_item(player)
+                if img:
+                    items.append(img)
+
+        return items
+
+    def _build_injury_content(self) -> List[Image.Image]:
+        """Build ordered scroll items for the injury/OTA ticker."""
+        players = self.injuries_data
+        if not players:
+            return []
+
+        items: List[Image.Image] = [
+            self._create_section_header("NFL INJURIES", (255, 100, 0))
+        ]
+        for player in players:
+            img = self._create_injury_item(player)
+            if img:
+                items.append(img)
+        return items
+
+    def _create_leaders_scroll_image(self) -> None:
+        """Build and cache the leaders scrolling image."""
+        if not self._is_leaders_active():
+            self.scroll_helper.clear_cache()
+            return
+        content = self._build_leaders_content()
+        if content:
+            self.scroll_helper.create_scrolling_image(content, item_gap=self.item_gap, element_gap=8)
+        else:
+            self.scroll_helper.clear_cache()
+
+    def _create_injuries_scroll_image(self) -> None:
+        """Build and cache the injuries scrolling image."""
+        if not self._is_leaders_active():
+            self.scroll_helper.clear_cache()
+            return
+        content = self._build_injury_content()
+        if content:
+            self.scroll_helper.create_scrolling_image(content, item_gap=self.item_gap, element_gap=8)
+        else:
+            self.scroll_helper.clear_cache()
+
+    # -------------------------------------------------------------------------
+    # Update helpers — leaders / injuries
+    # -------------------------------------------------------------------------
+
+    def _update_leaders(self) -> None:
+        """Fetch leaders data and rebuild scroll image."""
+        current_time = time.time()
+        if (self.last_leaders_update is not None
+                and current_time - self.last_leaders_update < self.leaders_refresh_interval):
+            return
+
+        if not self._is_leaders_active():
+            self.scroll_helper.clear_cache()
+            return
+
+        self.logger.info("Updating NFL leaders data")
+        try:
+            self.leaders_data = self._fetch_weekly_leaders()
+            self._create_leaders_scroll_image()
+            self.last_leaders_update = current_time
+            self.logger.info(f"Loaded {len(self.leaders_data)} leader entries")
+        except Exception as e:
+            self.logger.error(f"Error updating leaders: {e}", exc_info=True)
+
+    def _update_injuries(self) -> None:
+        """Fetch injury data and rebuild scroll image."""
+        current_time = time.time()
+        if (self.last_injuries_update is not None
+                and current_time - self.last_injuries_update < self.injuries_refresh_interval):
+            return
+
+        if not self._is_leaders_active():
+            self.scroll_helper.clear_cache()
+            return
+
+        self.logger.info("Updating NFL injury data")
+        try:
+            self.injuries_data = self._fetch_injury_report()
+            self._create_injuries_scroll_image()
+            self.last_injuries_update = current_time
+            self.logger.info(f"Loaded {len(self.injuries_data)} injury entries")
+        except Exception as e:
+            self.logger.error(f"Error updating injuries: {e}", exc_info=True)
+
     def update(self) -> None:
         """
         Fetch/update draft data from ESPN API.
@@ -1143,6 +1590,14 @@ class NFLDraftPlugin(BasePlugin):
 
         # Check if refresh is needed
         if self.last_update_time is not None and current_time - self.last_update_time < refresh_interval:
+            return
+
+        # Dispatch to leaders / injuries updaters for non-draft modes
+        if self.plugin_id == "nfl_leaders_ticker":
+            self._update_leaders()
+            return
+        if self.plugin_id == "nfl_injuries_ticker":
+            self._update_injuries()
             return
 
         self.logger.info(f"Updating NFL Draft data (live={self.is_draft_live}, year={self.draft_year}, simulate={self.simulate_live})")
@@ -1198,6 +1653,22 @@ class NFLDraftPlugin(BasePlugin):
         """
         if force_clear:
             self.display_manager.clear()
+
+        # Leaders / injuries modes share the same scroll render path
+        if self.plugin_id in ("nfl_leaders_ticker", "nfl_injuries_ticker"):
+            if not self._is_leaders_active():
+                self._display_blank()
+                return
+            try:
+                self.scroll_helper.update_scroll_position()
+                visible = self.scroll_helper.get_visible_portion()
+                if visible:
+                    self.display_manager.image = visible
+                    self.display_manager.update_display()
+            except Exception as e:
+                self.logger.error(f"Error displaying {self.plugin_id}: {e}")
+                self._display_error()
+            return
 
         with self._state_lock:
             picks_loaded = bool(self.draft_picks)
@@ -1311,6 +1782,19 @@ class NFLDraftPlugin(BasePlugin):
         giving smoother integration than handing it the pre-built scroll image.
         Returns None if no picks are loaded yet.
         """
+        # Leaders / injuries modes return their pre-built item lists
+        if self.plugin_id == "nfl_leaders_ticker":
+            if not self._is_leaders_active() or not self.leaders_data:
+                return None
+            images = self._build_leaders_content()
+            return images if images else None
+
+        if self.plugin_id == "nfl_injuries_ticker":
+            if not self._is_leaders_active() or not self.injuries_data:
+                return None
+            images = self._build_injury_content()
+            return images if images else None
+
         with self._state_lock:
             picks = list(self.draft_picks)
             status = self.draft_status
