@@ -94,6 +94,7 @@ class NFLDraftPlugin(BasePlugin):
         # Font loading - separate sizes for player name vs details
         self.player_name_font = self._load_font(self.player_name_font_size)
         self.detail_font = self._load_font(self.detail_font_size)
+        self.injury_detail_font = self._load_font(self.injury_detail_font_size)
 
         # Logo path (using core LEDMatrix assets)
         self.logo_base_path = Path("assets/sports/nfl_logos")
@@ -115,6 +116,7 @@ class NFLDraftPlugin(BasePlugin):
         self.font_name = self.config.get("font", "PressStart2P-Regular.ttf")
         self.player_name_font_size = self.config.get("player_name_font_size", 12)
         self.detail_font_size = self.config.get("detail_font_size", 8)
+        self.injury_detail_font_size = self.config.get("injury_detail_font_size", 7)
 
         # Color settings
         player_color = self.config.get("player_name_color", {"r": 255, "g": 255, "b": 255})
@@ -1308,8 +1310,6 @@ class NFLDraftPlugin(BasePlugin):
                 name = athlete.get("shortName", "") or athlete.get("displayName", "")
 
                 comment = injury.get("shortComment", "")
-                if len(comment) > 38:
-                    comment = comment[:35] + "..."
 
                 players.append({
                     "name": name,
@@ -1421,11 +1421,11 @@ class NFLDraftPlugin(BasePlugin):
         td = ImageDraw.Draw(temp)
         try:
             name_w = int(td.textlength(name_line, font=self.player_name_font))
-            detail_w = int(td.textlength(detail_line, font=self.detail_font))
+            detail_w = int(td.textlength(detail_line, font=self.injury_detail_font))
         except Exception:
             nb = td.textbbox((0, 0), name_line, font=self.player_name_font)
             name_w = nb[2] - nb[0]
-            db = td.textbbox((0, 0), detail_line, font=self.detail_font)
+            db = td.textbbox((0, 0), detail_line, font=self.injury_detail_font)
             detail_w = db[2] - db[0]
 
         gap = 6
@@ -1444,22 +1444,22 @@ class NFLDraftPlugin(BasePlugin):
             x += logo_width + gap
 
         line_gap = 2
-        total_text_h = self.player_name_font_size + line_gap + self.detail_font_size
+        total_text_h = self.player_name_font_size + line_gap + self.injury_detail_font_size
         top_y = (self.display_height - total_text_h) // 2
         draw.text((x, top_y), name_line, font=self.player_name_font, fill=self.player_color)
 
-        # Draw status label in status color, then rest of detail in white
+        # Draw status label in status color, then comment in white — both at injury_detail_font
         label_text = label
         rest_text = f"  {comment}" if comment else ""
         try:
-            label_px = int(draw.textlength(label_text, font=self.detail_font))
+            label_px = int(draw.textlength(label_text, font=self.injury_detail_font))
         except Exception:
-            lb = draw.textbbox((0, 0), label_text, font=self.detail_font)
+            lb = draw.textbbox((0, 0), label_text, font=self.injury_detail_font)
             label_px = lb[2] - lb[0]
         detail_y = top_y + self.player_name_font_size + line_gap
-        draw.text((x, detail_y), label_text, font=self.detail_font, fill=status_color)
+        draw.text((x, detail_y), label_text, font=self.injury_detail_font, fill=status_color)
         if rest_text:
-            draw.text((x + label_px, detail_y), rest_text, font=self.detail_font, fill=(200, 200, 200))
+            draw.text((x + label_px, detail_y), rest_text, font=self.injury_detail_font, fill=(200, 200, 200))
 
         return img
 
