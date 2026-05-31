@@ -1310,6 +1310,8 @@ class NFLDraftPlugin(BasePlugin):
                 name = athlete.get("shortName", "") or athlete.get("displayName", "")
 
                 comment = injury.get("shortComment", "")
+                # Strip trailing reporter attribution: ", Name of Outlet reports."
+                comment = re.sub(r',\s+\S.*?\breports?\.\s*$', '', comment, flags=re.IGNORECASE).strip()
 
                 players.append({
                     "name": name,
