@@ -102,6 +102,7 @@ class NFLDraftPlugin(BasePlugin):
         # Ensure NFL Draft logo is installed and load it for the scroll header
         self._ensure_logo_installed()
         self.nfl_draft_logo = self._load_nfl_draft_logo()
+        self.nfl_logo = self._load_nfl_logo()
 
         self.logger.info(f"NFL Draft plugin initialized for year {self.draft_year}")
 
@@ -1138,6 +1139,38 @@ class NFLDraftPlugin(BasePlugin):
             self.logger.error(f"Error loading NFL Draft logo: {e}")
             return None
 
+    def _load_nfl_logo(self) -> Optional[Image.Image]:
+        """Load the NFL shield logo for use in off-season (injury/leaders) displays."""
+        logo_path = Path("assets/sports/nfl_logos/nfl.png")
+        if not logo_path.exists():
+            self.logger.warning(f"NFL logo not found at {logo_path}")
+            return None
+
+        try:
+            raw = Image.open(logo_path)
+            if raw.mode != 'RGBA':
+                raw = raw.convert('RGBA')
+
+            bbox = raw.getbbox()
+            if bbox:
+                raw = raw.crop(bbox)
+
+            raw.thumbnail(
+                (self.display_width // 2, self.display_height),
+                Image.Resampling.LANCZOS
+            )
+
+            canvas = Image.new('RGB', (raw.width, self.display_height), (0, 0, 0))
+            y = (self.display_height - raw.height) // 2
+            canvas.paste(raw, (0, y), raw)
+
+            self.logger.debug(f"Loaded NFL logo ({raw.width}x{raw.height})")
+            return canvas
+
+        except Exception as e:
+            self.logger.error(f"Error loading NFL logo: {e}")
+            return None
+
     # -------------------------------------------------------------------------
     # Leaders / injuries season gating
     # -------------------------------------------------------------------------
@@ -1482,7 +1515,11 @@ class NFLDraftPlugin(BasePlugin):
         else:
             header_text = "NFL LEADERS"
 
-        items: List[Image.Image] = [self._create_section_header(header_text, (255, 200, 0))]
+        # NFL shield logo leads; text header with week/season context follows
+        items: List[Image.Image] = []
+        if self.nfl_logo:
+            items.append(self.nfl_logo)
+        items.append(self._create_section_header(header_text, (255, 200, 0)))
 
         # Group by stat type, each group gets a sub-header and sorted players
         for stat_key in self.leaders_stat_types:
@@ -1506,9 +1543,11 @@ class NFLDraftPlugin(BasePlugin):
         if not players:
             return []
 
-        items: List[Image.Image] = [
-            self._create_section_header("NFL INJURIES", (255, 100, 0))
-        ]
+        # NFL shield logo as the section lead-in; fall back to text header
+        if self.nfl_logo:
+            items: List[Image.Image] = [self.nfl_logo]
+        else:
+            items: List[Image.Image] = [self._create_section_header("NFL INJURIES", (255, 100, 0))]
 
         # Group players by team, preserving order of first appearance
         teams_order: List[str] = []
