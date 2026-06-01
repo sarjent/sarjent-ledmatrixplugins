@@ -1339,6 +1339,17 @@ class NFLDraftPlugin(BasePlugin):
                 if not include:
                     continue
 
+                # Staleness filter: drop entries older than 7 days
+                date_str = injury.get("date", "")
+                report_date = None
+                if date_str:
+                    try:
+                        report_date = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                        if datetime.now(timezone.utc) - report_date > timedelta(days=7):
+                            continue
+                    except ValueError:
+                        pass
+
                 # Prefer shortName, fall back to displayName
                 name = athlete.get("shortName", "") or athlete.get("displayName", "")
 
@@ -1346,12 +1357,16 @@ class NFLDraftPlugin(BasePlugin):
                 # Strip trailing reporter attribution: ", Name of Outlet reports."
                 comment = re.sub(r',\s+\S.*?\breports?\.\s*$', '', comment, flags=re.IGNORECASE).strip()
 
+                # Format date as short label e.g. "Jun 1"
+                date_label = report_date.strftime("%-m/%-d") if report_date else ""
+
                 players.append({
                     "name": name,
                     "position": position,
                     "team_abbr": team_abbr,
                     "status": status,
                     "comment": comment,
+                    "date_label": date_label,
                 })
 
         return players
@@ -1483,9 +1498,11 @@ class NFLDraftPlugin(BasePlugin):
         top_y = (self.display_height - total_text_h) // 2
         draw.text((x, top_y), name_line, font=self.player_name_font, fill=self.player_color)
 
-        # Draw status label in status color, then comment in white — both at injury_detail_font
+        # Draw status label in status color, date + comment in white — both at injury_detail_font
         label_text = label
-        rest_text = f"  {comment}" if comment else ""
+        date_label = player.get("date_label", "")
+        date_part = f"  {date_label}" if date_label else ""
+        rest_text = f"{date_part}  {comment}" if comment else date_part
         try:
             label_px = int(draw.textlength(label_text, font=self.injury_detail_font))
         except Exception:
