@@ -1555,7 +1555,7 @@ class NFLDraftPlugin(BasePlugin):
         return items
 
     def _build_injury_content(self) -> List[Image.Image]:
-        """Build ordered scroll items for the injury ticker, grouped by team."""
+        """Build ordered scroll items for the injury ticker."""
         players = self.injuries_data
         if not players:
             return []
@@ -1566,24 +1566,10 @@ class NFLDraftPlugin(BasePlugin):
         else:
             items: List[Image.Image] = [self._create_section_header("NFL INJURIES", (255, 100, 0))]
 
-        # Group players by team, preserving order of first appearance
-        teams_order: List[str] = []
-        by_team: Dict[str, List[Dict[str, Any]]] = {}
         for player in players:
-            abbr = player.get("team_abbr", "")
-            if abbr not in by_team:
-                by_team[abbr] = []
-                teams_order.append(abbr)
-            by_team[abbr].append(player)
-
-        for team_abbr in teams_order:
-            logo = self._load_team_logo(team_abbr)
-            if logo:
-                items.append(logo)
-            for player in by_team[team_abbr]:
-                img = self._create_injury_item(player, show_logo=False)
-                if img:
-                    items.append(img)
+            img = self._create_injury_item(player, show_logo=True)
+            if img:
+                items.append(img)
 
         return items
 
