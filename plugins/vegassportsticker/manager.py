@@ -1248,6 +1248,18 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                                 # Build game dict (existing logic)
                                 home_record = home_team.get('records', [{}])[0].get('summary', '') if home_team.get('records') else ''
                                 away_record = away_team.get('records', [{}])[0].get('summary', '') if away_team.get('records') else ''
+
+                                # Probable starting pitcher jersey numbers (pre-game baseball only)
+                                home_probable_jersey = ''
+                                away_probable_jersey = ''
+                                if league_config.get('sport') == 'baseball' and status_state != 'in':
+                                    for comp in [home_team, away_team]:
+                                        probables = comp.get('probables', [])
+                                        jersey = probables[0].get('athlete', {}).get('jersey', '') if probables else ''
+                                        if comp['homeAway'] == 'home':
+                                            home_probable_jersey = jersey
+                                        else:
+                                            away_probable_jersey = jersey
                                 
                                 # Dynamically set update interval based on game start time
                                 time_until_game = game_time - now
@@ -1345,7 +1357,9 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                                     'live_info': live_info,
                                     'tournament_round': tournament_round,
                                     'home_seed': home_seed,
-                                    'away_seed': away_seed
+                                    'away_seed': away_seed,
+                                    'home_probable_jersey': home_probable_jersey,
+                                    'away_probable_jersey': away_probable_jersey,
                                 }
                                 all_games.append(game)
                                 games_found += 1
@@ -1404,7 +1418,8 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                 # Extract inning information
                 situation = competitions.get('situation', {})
                 count = situation.get('count', {})
-                
+                pitcher_jersey = situation.get('pitcher', {}).get('athlete', {}).get('jersey', '')
+
                 live_info.update({
                     'inning': status.get('period', 1),
                     'inning_half': 'top',  # Default
@@ -1415,7 +1430,8 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                         situation.get('onFirst', False),
                         situation.get('onSecond', False),
                         situation.get('onThird', False)
-                    ]
+                    ],
+                    'pitcher_jersey': pitcher_jersey,
                 })
                 
                 # Determine inning half from status detail
@@ -1921,6 +1937,24 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
             away_team_record_text = str(away_score)
             home_team_record_text = str(home_score)
 
+        # Append pitcher jersey number for baseball (pre-game probable / live current)
+        _sport = self.league_configs.get(league_key, {}).get('sport') if league_key else None
+        if _sport == 'baseball':
+            if is_live and live_info:
+                pitcher_jersey = live_info.get('pitcher_jersey', '')
+                if pitcher_jersey:
+                    if live_info.get('inning_half', 'top') == 'top':
+                        home_team_record_text = f"{home_team_record_text} ({pitcher_jersey})"
+                    else:
+                        away_team_record_text = f"{away_team_record_text} ({pitcher_jersey})"
+            else:
+                away_jersey = game.get('away_probable_jersey', '')
+                home_jersey = game.get('home_probable_jersey', '')
+                if away_jersey:
+                    away_team_record_text = f"{away_team_record_text} ({away_jersey})"
+                if home_jersey:
+                    home_team_record_text = f"{home_team_record_text} ({home_jersey})"
+
         team_info_width = max(
             int(temp_draw.textlength(away_team_name_text,   font=team_font)),
             int(temp_draw.textlength(away_team_record_text, font=team_font)),
@@ -2221,6 +2255,24 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
             home_score = live_info.get('home_score', 0)
             away_team_text = f"{away_team_name}:{away_score} "
             home_team_text = f"{home_team_name}:{home_score} "
+
+        # Append pitcher jersey number for baseball (pre-game probable / live current)
+        _sport = self.league_configs.get(league_key, {}).get('sport') if league_key else None
+        if _sport == 'baseball':
+            if is_live and live_info:
+                pitcher_jersey = live_info.get('pitcher_jersey', '')
+                if pitcher_jersey:
+                    if live_info.get('inning_half', 'top') == 'top':
+                        home_team_text = f"{home_team_text.rstrip()} ({pitcher_jersey})"
+                    else:
+                        away_team_text = f"{away_team_text.rstrip()} ({pitcher_jersey})"
+            else:
+                away_jersey = game.get('away_probable_jersey', '')
+                home_jersey = game.get('home_probable_jersey', '')
+                if away_jersey:
+                    away_team_text = f"{away_team_text} ({away_jersey})"
+                if home_jersey:
+                    home_team_text = f"{home_team_text} ({home_jersey})"
 
         team_info_width = max(
             int(temp_draw.textlength(away_team_text, font=team_font)),
@@ -3034,36 +3086,97 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
             self._display_fallback_message()
 
     def _display_fallback_message(self):
-        """Display a fallback message when no games data is available."""
+        """Display a 'No Games' screen on a black background with a league logo if available."""
+        # League logo filenames within each league's logo_dir in the core assets
+        league_logo_files = {
+            'mlb':              'mlb.png',
+            'nfl':              'nfl.png',
+            'nba':              'nba.png',
+            'nhl':              'NHL.png',
+            'ncaa_fb':          'ncaa_fb.png',
+            'ncaam_basketball': 'ncaam.png',
+        }
+        league_display_names = {
+            'mlb':              'MLB',
+            'nfl':              'NFL',
+            'nba':              'NBA',
+            'nhl':              'NHL',
+            'milb':             'MiLB',
+            'ncaa_fb':          'NCAA FB',
+            'ncaam_basketball': 'NCAA BB',
+            'ncaa_baseball':    'NCAA Baseball',
+            'soccer':           'Soccer',
+        }
         try:
             width = self.display_manager.matrix.width
             height = self.display_manager.matrix.height
-            
-            logger.info(f"Displaying fallback message on {width}x{height} display")
-            
-            # Create a simple fallback image with a brighter background
-            image = Image.new('RGB', (width, height), color=(50, 50, 50))  # Dark gray instead of black
+
+            image = Image.new('RGB', (width, height), color=(0, 0, 0))
             draw = ImageDraw.Draw(image)
-            
-            # Draw a simple message with larger font
-            message = "No odds data"
-            font = self.fonts['large']  # Use large font for better visibility
-            text_width = draw.textlength(message, font=font)
-            text_x = (width - text_width) // 2
-            text_y = (height - font.size) // 2
-            
-            logger.info(f"Drawing fallback message: '{message}' at position ({text_x}, {text_y})")
-            
-            # Draw with bright white text and black outline
-            self._draw_text_with_outline(draw, message, (text_x, text_y), font, fill=(255, 255, 255), outline_color=(0, 0, 0))
-            
-            # Display the fallback image
+
+            # Find the league logo for the first enabled league that has one;
+            # also record the display name as a text fallback when no logo file exists.
+            logo_image = None
+            fallback_league_name = None
+            first_enabled = self.enabled_leagues[0] if self.enabled_leagues else None
+            if first_enabled:
+                fallback_league_name = league_display_names.get(first_enabled, first_enabled.upper())
+
+            for league_key in self.enabled_leagues:
+                logo_file = league_logo_files.get(league_key)
+                if not logo_file:
+                    continue
+                lc = self.league_configs.get(league_key, {})
+                logo_dir = lc.get('logo_dir', '')
+                if not logo_dir:
+                    continue
+                logo_dir_path = Path(logo_dir)
+                if not logo_dir_path.is_absolute():
+                    logo_dir_path = self.project_root / logo_dir_path
+                logo_path = logo_dir_path / logo_file
+                if logo_path.exists():
+                    logo_image = self.convert_image(logo_path)
+                    if logo_image:
+                        fallback_league_name = None  # logo found; no text fallback needed
+                        break
+
+            message = "No Games"
+            font = self.team_font
+            font_h = font.size if hasattr(font, 'size') else 8
+            text_width = int(draw.textlength(message, font=font))
+
+            if logo_image:
+                max_logo_h = height - font_h - 4
+                scale = min(1.0, max_logo_h / logo_image.height)
+                logo_w = int(logo_image.width * scale)
+                logo_h = int(logo_image.height * scale)
+                logo_image = logo_image.resize((logo_w, logo_h), Image.Resampling.LANCZOS)
+
+                gap = 2
+                total_h = logo_h + gap + font_h
+                start_y = (height - total_h) // 2
+
+                logo_x = (width - logo_w) // 2
+                image.paste(logo_image, (logo_x, start_y), logo_image if logo_image.mode == 'RGBA' else None)
+
+                text_x = (width - text_width) // 2
+                text_y = start_y + logo_h + gap
+                draw.text((text_x, text_y), message, font=font, fill=(255, 255, 255))
+            elif fallback_league_name:
+                # No logo file: show league name above "No Games"
+                name_width = int(draw.textlength(fallback_league_name, font=font))
+                gap = 2
+                total_h = font_h + gap + font_h
+                start_y = (height - total_h) // 2
+                draw.text(((width - name_width) // 2, start_y), fallback_league_name, font=font, fill=(255, 255, 255))
+                draw.text(((width - text_width) // 2, start_y + font_h + gap), message, font=font, fill=(255, 255, 255))
+            else:
+                draw.text(((width - text_width) // 2, (height - font_h) // 2), message, font=font, fill=(255, 255, 255))
+
             self.display_manager.image = image
             self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
             self.display_manager.update_display()
-            
-            logger.info("Fallback message display completed")
-            
+
         except Exception as e:
             logger.error(f"Error displaying fallback message: {e}", exc_info=True)
 
