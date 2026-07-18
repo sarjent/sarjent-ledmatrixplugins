@@ -1,7 +1,7 @@
 {
   "id": "win-celebration",
   "name": "Win Celebration",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Displays animated GIF celebrations when configured teams win. Supports multiple teams with per-team GIFs, brand colors, and custom win messages. Works with MLB, NFL, NBA, and NHL via the ESPN public API.",
   "author": "sarjent",
   "homepage": "https://github.com/sarjent/ledmatrix-win-celebration",
@@ -43,6 +43,11 @@
     }
   ],
   "versions": [
+    {
+      "version": "1.4.5",
+      "ledmatrix_min": "1.0.0",
+      "released": "2026-07-18"
+    },
     {
       "version": "1.4.4",
       "ledmatrix_min": "1.0.0",
@@ -89,7 +94,7 @@
       "released": "2026-03-07"
     }
   ],
-  "last_updated": "2026-03-08",
+  "last_updated": "2026-07-18",
   "stars": 0,
   "downloads": 0,
   "verified": false,

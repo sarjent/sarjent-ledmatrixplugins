@@ -945,6 +945,10 @@ class WinCelebrationPlugin(BasePlugin):
     # Live priority — immediate takeover after a new win
     # ------------------------------------------------------------------
 
+    def has_live_priority(self) -> bool:
+        """Required by display controller to interrupt Vegas mode on a new win."""
+        return self.has_live_content()
+
     def has_live_content(self) -> bool:
         """
         Returns True if any team has a new win that hasn't been displayed yet.
