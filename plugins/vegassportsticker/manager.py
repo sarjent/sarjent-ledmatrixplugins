@@ -1168,9 +1168,8 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                                     logger.warning(f"Filtering out stale 'in progress' game {game_id} that started {hours_since_start:.1f}h ago")
                                     continue
 
-                            # For live games, include them regardless of time window
-                            # For scheduled games, check if they're within the future window
-                            if status_state == 'in' or (now <= game_time <= future_window):
+                            # Live/completed games bypass the future-window check; scheduled games must be upcoming
+                            if status_state in ('in', 'post') or (now <= game_time <= future_window):
                                 competitors = event['competitions'][0]['competitors']
                                 home_team = next(c for c in competitors if c['homeAway'] == 'home')
                                 away_team = next(c for c in competitors if c['homeAway'] == 'away')
