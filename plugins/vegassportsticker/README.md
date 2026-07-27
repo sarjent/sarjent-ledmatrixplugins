@@ -6,6 +6,9 @@ A LEDMatrix plugin that displays scrolling odds, betting lines, and live scores 
 
 ## Changelog
 
+### 1.6.0 (2026-07-27)
+- **Feature:** Today's completed games are now shown in the ticker with final scores instead of being hidden. The right column displays "F" for a normal finish, "F/10" / "F/11" for extra innings (baseball), or "F/OT" for overtime/shootout (football, basketball, hockey). Team names render in white; odds/spread are not shown for completed games.
+
 ### 1.5.1 (2026-07-18)
 - **Fix:** No-data fallback screen now shows the correct league logo (`mlb.png`, `nfl.png`, etc.) from the LEDMatrix core assets instead of a team logo. For leagues with no bundled logo (MiLB, NCAA Baseball, Soccer) the league name is shown as text above "No Games".
 

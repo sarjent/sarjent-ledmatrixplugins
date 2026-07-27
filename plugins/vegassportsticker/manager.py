@@ -1151,13 +1151,13 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                         status = event['status']['type']['name'].lower()
                         status_state = event['status']['type']['state'].lower()
 
-                        # Explicitly exclude completed games (defense against stale cached data)
-                        if status_state == 'post':
-                            continue
-
-                        # Include both scheduled and live games
-                        if status in ['scheduled', 'pre-game', 'status_scheduled'] or status_state == 'in':
+                        # Include scheduled, live, and today's completed games
+                        if status in ['scheduled', 'pre-game', 'status_scheduled'] or status_state in ('in', 'post'):
                             game_time = datetime.fromisoformat(event['date'].replace('Z', '+00:00'))
+
+                            # Exclude completed games not from today (defense against stale cached data)
+                            if status_state == 'post' and game_time.date() != now.date():
+                                continue
 
                             # Additional safety: exclude games claiming to be "in progress" but started >48h ago
                             # (likely stale cached data from a game that should have ended)
@@ -1331,11 +1331,19 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                                     if odds_data.get('over_under') is not None:
                                         has_odds = True
                                 
-                                # Extract live game information if the game is in progress
+                                # Extract game info for live and completed games (to get scores)
                                 live_info = None
-                                if status_state == 'in':
+                                if status_state in ('in', 'post'):
                                     live_info = self._extract_live_game_info(event, sport)
-                                
+
+                                # For completed games, capture the final period/inning from ESPN status
+                                final_period = 0
+                                if status_state == 'post':
+                                    try:
+                                        final_period = int(event['competitions'][0]['status'].get('period', 0) or 0)
+                                    except (TypeError, ValueError, IndexError, KeyError):
+                                        final_period = 0
+
                                 game = {
                                     'id': game_id,
                                     'home_id': home_id,
@@ -1360,6 +1368,7 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                                     'away_seed': away_seed,
                                     'home_probable_jersey': home_probable_jersey,
                                     'away_probable_jersey': away_probable_jersey,
+                                    'final_period': final_period,
                                 }
                                 all_games.append(game)
                                 games_found += 1
@@ -1493,8 +1502,9 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
         """Format the odds text for display."""
         # Check if this is a live game
         is_live = game.get('status_state') == 'in'
+        is_final = game.get('status_state') == 'post'
         live_info = game.get('live_info')
-        
+
         if is_live and live_info:
             # Format live game information
             home_score = live_info.get('home_score', 0)
@@ -1558,7 +1568,24 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                 
             else:
                 return f"[LIVE] {away_team_name} {away_score} vs {home_team_name} {home_score}"
-        
+
+        if is_final and live_info:
+            away_team_name = game.get('away_team_name', game['away_team'])
+            home_team_name = game.get('home_team_name', game['home_team'])
+            away_score = live_info.get('away_score', 0)
+            home_score = live_info.get('home_score', 0)
+            _fs = self.league_configs.get(game.get('league', ''), {}).get('sport')
+            _fp = game.get('final_period', 0)
+            if _fs == 'baseball':
+                _ftag = f"F/{_fp}" if _fp > 9 else "F"
+            elif _fs in ('football', 'basketball') and _fp > 4:
+                _ftag = "F/OT"
+            elif _fs == 'hockey' and _fp > 3:
+                _ftag = "F/OT"
+            else:
+                _ftag = "F"
+            return f"[{_ftag}] {away_team_name} {away_score} vs {home_team_name} {home_score}"
+
         # Original odds formatting for non-live games
         odds = game.get('odds', {})
         if not odds:
@@ -1795,10 +1822,11 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
         # Format date and time into 3 parts
         local_time = self._parse_and_convert_time(game.get('start_time'))
         
-        # Check if this is a live game
+        # Check game state
         is_live = game.get('status_state') == 'in'
+        is_final = game.get('status_state') == 'post'
         live_info = game.get('live_info')
-        
+
         if is_live and live_info:
             # Show live game information instead of date/time
             sport = None
@@ -1871,8 +1899,21 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                 day_text = "LIVE"
                 date_text = f"{live_info.get('home_score', 0)}-{live_info.get('away_score', 0)}"
                 time_text = live_info.get('clock', '')
+        elif is_final and live_info:
+            _final_sport = self.league_configs.get(game.get('league', ''), {}).get('sport')
+            _final_period = game.get('final_period', 0)
+            if _final_sport == 'baseball':
+                day_text = f"F/{_final_period}" if _final_period > 9 else "F"
+            elif _final_sport in ('football', 'basketball') and _final_period > 4:
+                day_text = "F/OT"
+            elif _final_sport == 'hockey' and _final_period > 3:
+                day_text = "F/OT"
+            else:
+                day_text = "F"
+            date_text = ""
+            time_text = ""
         else:
-            # Show regular date/time for non-live games
+            # Show regular date/time for pre-game
             if local_time:
                 day_text = local_time.strftime("%b %d").upper()  # e.g. "APR 04"
                 date_text = local_time.strftime("%I:%M%p").lstrip('0').rstrip('M')  # e.g. "6:00P"
@@ -1930,8 +1971,8 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
         home_team_name_text = home_team_name
         home_team_record_text = game.get('home_record', '') or 'N/A'
 
-        # For live games, show scores instead of records
-        if is_live and live_info:
+        # For live/final games, show scores instead of records
+        if (is_live or is_final) and live_info:
             away_score = live_info.get('away_score', 0)
             home_score = live_info.get('home_score', 0)
             away_team_record_text = str(away_score)
@@ -1947,7 +1988,7 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                         home_team_record_text = f"{home_team_record_text} ({pitcher_jersey})"
                     else:
                         away_team_record_text = f"{away_team_record_text} ({pitcher_jersey})"
-            else:
+            elif not is_final:
                 away_jersey = game.get('away_probable_jersey', '')
                 home_jersey = game.get('home_probable_jersey', '')
                 if away_jersey:
@@ -1985,7 +2026,7 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
         # Build right-column rows 3 and 4: spread (favored team + value) and O/U
         spread_text = ""
         ou_text = ""
-        if not (is_live and live_info):
+        if not (is_live and live_info) and not (is_final and live_info):
             if home_favored:
                 spread_text = f"{home_team_abbr}{home_spread:+g}"
             elif away_favored:
@@ -2046,11 +2087,14 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
         ti_y = (height - ti_block_h) // 2
 
         if is_live and live_info:
-            name_color   = (255, 0, 0)      # Red for live team names
-            record_color = (255, 255, 255)  # White for live scores
+            name_color   = (255, 0, 0)
+            record_color = (255, 255, 255)
+        elif is_final and live_info:
+            name_color   = (255, 255, 255)
+            record_color = (255, 255, 255)
         else:
-            name_color   = (0, 128, 255)    # Blue for team names
-            record_color = (255, 255, 255)  # White for records
+            name_color   = (0, 128, 255)
+            record_color = (255, 255, 255)
 
         for text, color in [
             (away_team_name_text,   name_color),
@@ -2073,6 +2117,10 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                 (day_text,  datetime_font, (255, 0, 0)),
                 (date_text, datetime_font, (255, 0, 0)),
                 (time_text, datetime_font, (255, 0, 0)),
+            ]
+        elif is_final and live_info:
+            rc_rows = [
+                (day_text, datetime_font, (255, 255, 255)),
             ]
         else:
             rc_rows = [
@@ -2163,6 +2211,7 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
 
         local_time = self._parse_and_convert_time(game.get('start_time'))
         is_live = game.get('status_state') == 'in'
+        is_final = game.get('status_state') == 'post'
         live_info = game.get('live_info')
 
         if is_live and live_info:
@@ -2206,6 +2255,19 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                 day_text = "LIVE"
                 date_text = f"{live_info.get('home_score', 0)}-{live_info.get('away_score', 0)}"
                 time_text = live_info.get('clock', '')
+        elif is_final and live_info:
+            _final_sport = self.league_configs.get(game.get('league', ''), {}).get('sport')
+            _final_period = game.get('final_period', 0)
+            if _final_sport == 'baseball':
+                day_text = f"F/{_final_period}" if _final_period > 9 else "F"
+            elif _final_sport in ('football', 'basketball') and _final_period > 4:
+                day_text = "F/OT"
+            elif _final_sport == 'hockey' and _final_period > 3:
+                day_text = "F/OT"
+            else:
+                day_text = "F"
+            date_text = ""
+            time_text = ""
         else:
             if local_time:
                 day_text = local_time.strftime("%A")
@@ -2250,7 +2312,7 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
         away_team_text = f"{away_team_name} ({game.get('away_record', '') or 'N/A'})"
         home_team_text = f"{home_team_name} ({game.get('home_record', '') or 'N/A'})"
 
-        if is_live and live_info:
+        if (is_live or is_final) and live_info:
             away_score = live_info.get('away_score', 0)
             home_score = live_info.get('home_score', 0)
             away_team_text = f"{away_team_name}:{away_score} "
@@ -2266,7 +2328,7 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                         home_team_text = f"{home_team_text.rstrip()} ({pitcher_jersey})"
                     else:
                         away_team_text = f"{away_team_text.rstrip()} ({pitcher_jersey})"
-            else:
+            elif not is_final:
                 away_jersey = game.get('away_probable_jersey', '')
                 home_jersey = game.get('home_probable_jersey', '')
                 if away_jersey:
@@ -2326,6 +2388,9 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
             else:
                 away_odds_text = "LIVE"
                 home_odds_text = live_info.get('clock', '')
+        elif is_final and live_info:
+            away_odds_text = ""
+            home_odds_text = ""
         else:
             if home_favored:
                 home_odds_text = f"{home_spread}"
