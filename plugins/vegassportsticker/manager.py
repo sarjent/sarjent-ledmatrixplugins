@@ -1000,21 +1000,34 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
                         else:
                             logger.info(f"No favorite team games have odds yet for {league_key}, showing {len(league_games)} games without odds filter")
 
-                    # Cap at max_games_per_league as final safety limit
-                    league_games = league_games[:self.max_games_per_league]
+                    # Cap at max_games_per_league, but never drop live games
+                    _live = [g for g in league_games if g.get('status_state') == 'in']
+                    _rest = [g for g in league_games if g.get('status_state') != 'in']
+                    league_games = _live + _rest[:max(0, self.max_games_per_league - len(_live))]
                 else:
                     # Show all games, optionally only those with odds
                     league_games = all_games
                     if self.show_odds_only:
                         # Always include live games regardless of odds availability (live games lose their lines)
                         league_games = [g for g in league_games if g.get('status_state') == 'in' or (g.get('odds') and not g.get('odds', {}).get('no_odds', False))]
-                    # Sort by start_time
-                    league_games.sort(key=lambda x: x.get('start_time', datetime.max))
-                    league_games = league_games[:self.max_games_per_league]
-                
-                # Sorting (default is soonest)
+                    # Sort: live games first, then pre-game by start_time, completed last
+                    league_games.sort(key=lambda g: (
+                        0 if g.get('status_state') == 'in' else
+                        2 if g.get('status_state') == 'post' else 1,
+                        g.get('start_time', datetime.max)
+                    ))
+                    # Cap at max_games_per_league, but never drop live games
+                    _live = [g for g in league_games if g.get('status_state') == 'in']
+                    _rest = [g for g in league_games if g.get('status_state') != 'in']
+                    league_games = _live + _rest[:max(0, self.max_games_per_league - len(_live))]
+
+                # Final sort: live first, then by start_time within each state
                 if self.sort_order == 'soonest':
-                    league_games.sort(key=lambda x: x.get('start_time', datetime.max))
+                    league_games.sort(key=lambda g: (
+                        0 if g.get('status_state') == 'in' else
+                        2 if g.get('status_state') == 'post' else 1,
+                        g.get('start_time', datetime.max)
+                    ))
                 # (Other sort options can be added here)
                 
                 games_data.extend(league_games)

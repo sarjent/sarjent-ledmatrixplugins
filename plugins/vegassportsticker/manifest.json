@@ -1,7 +1,7 @@
 {
   "id": "vegassportsticker",
   "name": "Vegas Sports Ticker",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Displays scrolling odds and betting lines for upcoming games across multiple sports leagues. Features Vegas mode (panel layout with integrated odds) and Classic mode (original ticker format).",
   "author": "sarjent",
   "category": "sports",
@@ -10,6 +10,11 @@
   "branch": "main",
   "plugin_path": "",
   "versions": [
+    {
+      "version": "1.6.1",
+      "ledmatrix_min": "2.0.0",
+      "released": "2026-07-29"
+    },
     {
       "version": "1.6.0",
       "ledmatrix_min": "2.0.0",
@@ -43,7 +48,7 @@
   ],
   "stars": 0,
   "downloads": 0,
-  "last_updated": "2026-07-27",
+  "last_updated": "2026-07-29",
   "verified": true,
   "screenshot": "",
   "display_modes": [

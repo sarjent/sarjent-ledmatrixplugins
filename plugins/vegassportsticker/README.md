@@ -6,6 +6,9 @@ A LEDMatrix plugin that displays scrolling odds, betting lines, and live scores 
 
 ## Changelog
 
+### 1.6.1 (2026-07-29)
+- **Fix:** Live games were disappearing as the evening progressed. Completed games (earliest start times) were filling all `max_games_per_league` slots and crowding out live games that started later. Live games are now protected from the per-league cap and always sorted to the front of each league's slot.
+
 ### 1.6.0 (2026-07-27)
 - **Feature:** Today's completed games are now shown in the ticker with final scores instead of being hidden. The right column displays "F" for a normal finish, "F/10" / "F/11" for extra innings (baseball), or "F/OT" for overtime/shootout (football, basketball, hockey). Team names render in white; odds/spread are not shown for completed games.
 
