@@ -1707,6 +1707,89 @@ class NFLDraftPlugin(BasePlugin):
         self.display_manager.image = frame
         self.display_manager.update_display()
 
+    def _build_injury_vegas_card(self, player: Dict[str, Any]) -> Optional[Image.Image]:
+        """Build a tiled split-row Vegas card for one injury player.
+
+        Top half: player info tiled every display_width pixels — appears static as Vegas
+        scrolls horizontally (each tile is identical, so the window always shows the same
+        content regardless of scroll offset).
+        Bottom half: full injury comment text scrolling left with Vegas.
+        """
+        row_h = max(1, self.display_height // 2)
+        font = self._inj_row_font
+        font_h = self._inj_row_font_size
+
+        _tmp = Image.new("RGB", (1, 1))
+        _td = ImageDraw.Draw(_tmp)
+
+        def _tw(t: str) -> int:
+            try:
+                return int(_td.textlength(t, font=font))
+            except Exception:
+                bb = _td.textbbox((0, 0), t, font=font)
+                return bb[2] - bb[0]
+
+        team_abbr = player.get("team_abbr", "").upper()
+        raw_logo = self._load_team_logo(team_abbr)
+        logo = None
+        logo_w = 0
+        if raw_logo:
+            logo = raw_logo.resize((row_h, row_h), Image.Resampling.LANCZOS)
+            logo_w = row_h
+
+        name = player.get("name", "")
+        pos = player.get("position", "")
+        status_raw = player.get("status", "")
+        label, status_color = self._STATUS_STYLE.get(status_raw, (status_raw[:3].upper(), (200, 200, 200)))
+        date_label = player.get("date_label", "")
+        comment = player.get("comment", "") or label
+
+        top_tile = Image.new("RGB", (self.display_width, row_h), (0, 0, 0))
+        tdraw = ImageDraw.Draw(top_tile)
+
+        if logo:
+            top_tile.paste(logo, (0, 0), logo if logo.mode == "RGBA" else None)
+
+        gap = 3
+        cx = logo_w + gap
+        text_y = (row_h - font_h) // 2
+        name_pos = f"{name}  {pos}" if pos else name
+        sp_w = _tw("  ")
+
+        if cx + _tw(name_pos) <= self.display_width:
+            tdraw.text((cx, text_y), name_pos, font=font, fill=self.player_color)
+            cx += _tw(name_pos)
+            if cx + sp_w + _tw(label) <= self.display_width:
+                cx += sp_w
+                tdraw.text((cx, text_y), label, font=font, fill=status_color)
+                cx += _tw(label)
+                if date_label and cx + sp_w + _tw(date_label) <= self.display_width:
+                    cx += sp_w
+                    tdraw.text((cx, text_y), date_label, font=font, fill=(160, 160, 160))
+        else:
+            tdraw.text((logo_w + gap, text_y), name_pos, font=font, fill=self.player_color)
+
+        cw = _tw(comment) if comment else 0
+        bottom_img = Image.new("RGB", (max(cw, 1), row_h), (0, 0, 0))
+        if comment and cw > 0:
+            bdraw = ImageDraw.Draw(bottom_img)
+            cy = (row_h - font_h) // 2
+            bdraw.text((0, cy), comment, font=font, fill=(200, 200, 200))
+
+        # Tile top to match bottom width; at least 2 tiles ensures the static illusion
+        num_tiles = max(2, (max(cw, 1) + self.display_width - 1) // self.display_width)
+        card_w = num_tiles * self.display_width
+
+        card = Image.new("RGB", (card_w, self.display_height), (0, 0, 0))
+        for i in range(num_tiles):
+            card.paste(top_tile, (i * self.display_width, 0))
+
+        paste_w = min(cw, card_w)
+        if paste_w > 0:
+            card.paste(bottom_img.crop((0, 0, paste_w, row_h)), (0, row_h))
+
+        return card
+
     def _build_injury_content(self) -> List[Image.Image]:
         """Build ordered scroll items for the injury ticker."""
         players = self.injuries_data
@@ -2044,9 +2127,14 @@ class NFLDraftPlugin(BasePlugin):
             if imgs:
                 content.extend(imgs)
         if self._is_leaders_active() and self.injuries_data:
-            imgs = self._build_injury_content()
-            if imgs:
-                content.extend(imgs)
+            if self.nfl_logo:
+                content.append(self.nfl_logo)
+            else:
+                content.append(self._create_section_header("NFL INJURIES", (255, 100, 0)))
+            for player in self.injuries_data:
+                card = self._build_injury_vegas_card(player)
+                if card:
+                    content.append(card)
         if content:
             return content
 
