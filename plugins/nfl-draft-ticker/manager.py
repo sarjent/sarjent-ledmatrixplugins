@@ -98,6 +98,10 @@ class NFLDraftPlugin(BasePlugin):
         self._inj_top_img: Optional[Image.Image] = None
         self._inj_bottom_img: Optional[Image.Image] = None
 
+        # Background animation thread for Vegas STATIC injury display
+        self._inj_static_stop: threading.Event = threading.Event()
+        self._inj_static_thread: Optional[threading.Thread] = None
+
         # Request high-FPS render loop from display controller for smooth scrolling
         self.enable_scrolling: bool = True
 
@@ -1968,7 +1972,10 @@ class NFLDraftPlugin(BasePlugin):
         if force_clear:
             self.display_manager.clear()
 
-        _active_mode = display_mode or ""
+        # Vegas STATIC mode calls display(force_clear=True) without display_mode.
+        # Infer mode from plugin state and start the background animation thread.
+        _vegas_static = force_clear and display_mode is None
+        _active_mode = display_mode or (self._infer_active_mode() if _vegas_static else "")
 
         if _active_mode == "nfl_leaders_ticker":
             if not self._is_leaders_season_active():
@@ -1988,6 +1995,11 @@ class NFLDraftPlugin(BasePlugin):
         if _active_mode == "nfl_injuries_ticker":
             if not self._is_leaders_active():
                 self._display_blank()
+                return
+            if _vegas_static:
+                # Vegas STATIC: launch background animation thread and return immediately.
+                # The coordinator sleeps for get_display_duration() while the thread animates.
+                self._start_injury_vegas_animation()
                 return
             try:
                 self._display_injury_split_row()
@@ -2096,6 +2108,59 @@ class NFLDraftPlugin(BasePlugin):
     # Vegas scroll mode support
     # -------------------------------------------------------------------------
 
+    def _infer_active_mode(self) -> str:
+        """Infer the current display mode from plugin state (used when display_mode is not passed)."""
+        with self._state_lock:
+            has_picks = bool(self.draft_picks)
+            status = self.draft_status
+        if has_picks and status in ("live", "complete", "simulate"):
+            return "nfl_draft_ticker"
+        if self._is_leaders_season_active() and self.leaders_data:
+            return "nfl_leaders_ticker"
+        if self._is_leaders_active() and self.injuries_data:
+            return "nfl_injuries_ticker"
+        return "nfl_draft_ticker"
+
+    def _start_injury_vegas_animation(self) -> None:
+        """Launch a background thread that runs the split-row injury animation.
+
+        Called from display() during a Vegas STATIC pause. The thread writes
+        frames directly to the display at ~30 fps for the plugin's display
+        duration, stopping slightly before the coordinator resumes scrolling.
+        """
+        self._inj_static_stop.set()
+        if self._inj_static_thread and self._inj_static_thread.is_alive():
+            self._inj_static_thread.join(timeout=0.5)
+
+        self._inj_static_stop.clear()
+        duration = max(5.0, float(self.get_display_duration()) - 0.3)
+
+        def _animate() -> None:
+            self._inj_last_frame_time = 0.0
+            if self._inj_top_img is None or self._inj_bottom_img is None:
+                self._inj_player_idx = 0
+                self._inj_scroll_x = 0.0
+                self._inj_build_player()
+            end = time.time() + duration
+            while time.time() < end and not self._inj_static_stop.is_set():
+                try:
+                    self._display_injury_split_row()
+                except Exception as e:
+                    self.logger.warning("Injury Vegas animation error: %s", e)
+                    break
+                time.sleep(1 / 30)
+
+        self._inj_static_thread = threading.Thread(
+            target=_animate, daemon=True, name="inj-vegas-anim"
+        )
+        self._inj_static_thread.start()
+
+    def get_vegas_display_mode(self) -> VegasDisplayMode:
+        """Return STATIC when injury content is what this plugin would show."""
+        if self._infer_active_mode() == "nfl_injuries_ticker":
+            return VegasDisplayMode.STATIC
+        return super().get_vegas_display_mode()
+
     def get_vegas_content_type(self) -> str:
         """Report as multi-item content so Vegas uses SCROLL mode by default."""
         return 'multi'
@@ -2127,14 +2192,11 @@ class NFLDraftPlugin(BasePlugin):
             if imgs:
                 content.extend(imgs)
         if self._is_leaders_active() and self.injuries_data:
-            if self.nfl_logo:
-                content.append(self.nfl_logo)
-            else:
-                content.append(self._create_section_header("NFL INJURIES", (255, 100, 0)))
-            for player in self.injuries_data:
-                card = self._build_injury_vegas_card(player)
-                if card:
-                    content.append(card)
+            # Return a single placeholder: get_vegas_display_mode() returns STATIC so the
+            # coordinator intercepts this segment and calls display() for the animation
+            # instead of scrolling the content directly.
+            placeholder = Image.new("RGB", (self.display_width, self.display_height), (0, 0, 0))
+            content.append(placeholder)
         if content:
             return content
 
