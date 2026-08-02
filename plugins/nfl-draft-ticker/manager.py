@@ -91,20 +91,6 @@ class NFLDraftPlugin(BasePlugin):
         self.last_leaders_update: Optional[float] = None
         self.last_injuries_update: Optional[float] = None
 
-        # Split-row injury display state (Vegas injury mode)
-        self._inj_player_idx: int = 0
-        self._inj_scroll_x: float = 0.0
-        self._inj_last_frame_time: float = 0.0
-        self._inj_top_img: Optional[Image.Image] = None
-        self._inj_bottom_img: Optional[Image.Image] = None
-
-        # Background animation thread for Vegas STATIC injury display
-        self._inj_static_stop: threading.Event = threading.Event()
-        self._inj_static_thread: Optional[threading.Thread] = None
-
-        # Request high-FPS render loop from display controller for smooth scrolling
-        self.enable_scrolling: bool = True
-
         # Font loading - separate sizes for player name vs details
         self.player_name_font = self._load_font(self.player_name_font_size)
         self.detail_font = self._load_font(self.detail_font_size)
@@ -217,11 +203,6 @@ class NFLDraftPlugin(BasePlugin):
         self.injury_statuses = self.config.get("injury_statuses", ["Out", "Doubtful", "Injured Reserve"])
         self.show_ota_active = self.config.get("show_ota_active", False)
         self.injuries_refresh_interval = self.config.get("injuries_refresh_interval", 3600)
-
-        # Split-row injury display: font sized for half the display height
-        _inj_row_h = max(1, self.display_height // 2)
-        self._inj_row_font_size = max(7, _inj_row_h // 2)
-        self._inj_row_font = self._load_font(self._inj_row_font_size)
 
     def _load_font(self, size: int) -> ImageFont.ImageFont:
         """Load configured font at specified size."""
@@ -1573,227 +1554,6 @@ class NFLDraftPlugin(BasePlugin):
 
         return items
 
-    def _inj_build_player(self) -> None:
-        """Pre-render top (static) and bottom (scrolling) row images for the current injury player."""
-        players = self.injuries_data
-        if not players:
-            self._inj_top_img = None
-            self._inj_bottom_img = None
-            return
-
-        player = players[self._inj_player_idx % len(players)]
-        row_h = max(1, self.display_height // 2)
-        font = self._inj_row_font
-        font_h = self._inj_row_font_size
-
-        # Measure helper
-        _tmp = Image.new("RGB", (1, 1))
-        _td = ImageDraw.Draw(_tmp)
-        def _tw(t: str) -> int:
-            try:
-                return int(_td.textlength(t, font=font))
-            except Exception:
-                bb = _td.textbbox((0, 0), t, font=font)
-                return bb[2] - bb[0]
-
-        # --- Top row: [LOGO] Name  POS  STATUS  date ---
-        team_abbr = player.get("team_abbr", "").upper()
-        raw_logo = self._load_team_logo(team_abbr)
-        logo = None
-        logo_w = 0
-        if raw_logo:
-            logo = raw_logo.resize((row_h, row_h), Image.Resampling.LANCZOS)
-            logo_w = row_h
-
-        name = player.get("name", "")
-        pos = player.get("position", "")
-        status_raw = player.get("status", "")
-        label, status_color = self._STATUS_STYLE.get(status_raw, (status_raw[:3].upper(), (200, 200, 200)))
-        date_label = player.get("date_label", "")
-
-        top_img = Image.new("RGB", (self.display_width, row_h), (0, 0, 0))
-        draw = ImageDraw.Draw(top_img)
-
-        if logo:
-            top_img.paste(logo, (0, 0), logo if logo.mode == "RGBA" else None)
-
-        gap = 3
-        cx = logo_w + gap
-        text_y = (row_h - font_h) // 2
-
-        # Draw text components greedily left-to-right, stopping when no more room
-        name_pos = f"{name}  {pos}" if pos else name
-        sp = "  "
-        sp_w = _tw(sp)
-
-        if cx + _tw(name_pos) <= self.display_width:
-            draw.text((cx, text_y), name_pos, font=font, fill=self.player_color)
-            cx += _tw(name_pos)
-            if cx + sp_w + _tw(label) <= self.display_width:
-                cx += sp_w
-                draw.text((cx, text_y), label, font=font, fill=status_color)
-                cx += _tw(label)
-                if date_label and cx + sp_w + _tw(date_label) <= self.display_width:
-                    cx += sp_w
-                    draw.text((cx, text_y), date_label, font=font, fill=(160, 160, 160))
-        else:
-            # Name alone won't fit — truncate to available space
-            draw.text((logo_w + gap, text_y), name_pos, font=font, fill=self.player_color)
-
-        self._inj_top_img = top_img
-
-        # --- Bottom row: comment text (scrolls right-to-left) ---
-        comment = player.get("comment", "")
-        if not comment:
-            comment = label  # fallback: repeat status label if no comment
-
-        cw = _tw(comment) if comment else 0
-        bottom_img = Image.new("RGB", (max(cw, 1), row_h), (0, 0, 0))
-        if comment and cw > 0:
-            bdraw = ImageDraw.Draw(bottom_img)
-            cy = (row_h - font_h) // 2
-            bdraw.text((0, cy), comment, font=font, fill=(200, 200, 200))
-        self._inj_bottom_img = bottom_img
-
-    def _display_injury_split_row(self) -> None:
-        """
-        Render the injury ticker in split-row Vegas layout:
-          Top half  — static: logo + player name + position + status label + date
-          Bottom half — scrolling: injury comment text (right-to-left)
-        Advances to the next player once the comment has fully scrolled off screen.
-        """
-        if not self.injuries_data:
-            self._display_no_data()
-            return
-
-        now = time.time()
-        elapsed = (now - self._inj_last_frame_time) if self._inj_last_frame_time > 0 else 0.0
-        self._inj_last_frame_time = now
-
-        # Build player images on first call or after a data reset
-        if self._inj_top_img is None or self._inj_bottom_img is None:
-            self._inj_player_idx = 0
-            self._inj_scroll_x = 0.0
-            self._inj_build_player()
-
-        if self._inj_top_img is None:
-            self._display_no_data()
-            return
-
-        row_h = self.display_height // 2
-        bottom_w = self._inj_bottom_img.width if self._inj_bottom_img else 0
-
-        # Advance scroll: comment travels from right edge to fully off-screen left
-        self._inj_scroll_x += self.scroll_speed * elapsed
-
-        if self._inj_scroll_x >= self.display_width + bottom_w:
-            self._inj_player_idx = (self._inj_player_idx + 1) % max(1, len(self.injuries_data))
-            self._inj_scroll_x = 0.0
-            self._inj_build_player()
-
-        # --- Composite frame ---
-        frame = Image.new("RGB", (self.display_width, self.display_height), (0, 0, 0))
-
-        # Top half: paste static header
-        if self._inj_top_img:
-            frame.paste(self._inj_top_img, (0, 0))
-
-        # Bottom half: paste scrolling comment slice
-        if self._inj_bottom_img and bottom_w > 0:
-            text_x = self.display_width - int(self._inj_scroll_x)   # left edge of comment on screen
-            src_x = max(0, -text_x)                                  # first visible pixel in comment img
-            dst_x = max(0, text_x)                                   # where to paste on screen
-            visible_w = min(bottom_w - src_x, self.display_width - dst_x)
-            if visible_w > 0:
-                slice_ = self._inj_bottom_img.crop((src_x, 0, src_x + visible_w, row_h))
-                frame.paste(slice_, (dst_x, row_h))
-
-        self.display_manager.image = frame
-        self.display_manager.update_display()
-
-    def _build_injury_vegas_card(self, player: Dict[str, Any]) -> Optional[Image.Image]:
-        """Build a tiled split-row Vegas card for one injury player.
-
-        Top half: player info tiled every display_width pixels — appears static as Vegas
-        scrolls horizontally (each tile is identical, so the window always shows the same
-        content regardless of scroll offset).
-        Bottom half: full injury comment text scrolling left with Vegas.
-        """
-        row_h = max(1, self.display_height // 2)
-        font = self._inj_row_font
-        font_h = self._inj_row_font_size
-
-        _tmp = Image.new("RGB", (1, 1))
-        _td = ImageDraw.Draw(_tmp)
-
-        def _tw(t: str) -> int:
-            try:
-                return int(_td.textlength(t, font=font))
-            except Exception:
-                bb = _td.textbbox((0, 0), t, font=font)
-                return bb[2] - bb[0]
-
-        team_abbr = player.get("team_abbr", "").upper()
-        raw_logo = self._load_team_logo(team_abbr)
-        logo = None
-        logo_w = 0
-        if raw_logo:
-            logo = raw_logo.resize((row_h, row_h), Image.Resampling.LANCZOS)
-            logo_w = row_h
-
-        name = player.get("name", "")
-        pos = player.get("position", "")
-        status_raw = player.get("status", "")
-        label, status_color = self._STATUS_STYLE.get(status_raw, (status_raw[:3].upper(), (200, 200, 200)))
-        date_label = player.get("date_label", "")
-        comment = player.get("comment", "") or label
-
-        top_tile = Image.new("RGB", (self.display_width, row_h), (0, 0, 0))
-        tdraw = ImageDraw.Draw(top_tile)
-
-        if logo:
-            top_tile.paste(logo, (0, 0), logo if logo.mode == "RGBA" else None)
-
-        gap = 3
-        cx = logo_w + gap
-        text_y = (row_h - font_h) // 2
-        name_pos = f"{name}  {pos}" if pos else name
-        sp_w = _tw("  ")
-
-        if cx + _tw(name_pos) <= self.display_width:
-            tdraw.text((cx, text_y), name_pos, font=font, fill=self.player_color)
-            cx += _tw(name_pos)
-            if cx + sp_w + _tw(label) <= self.display_width:
-                cx += sp_w
-                tdraw.text((cx, text_y), label, font=font, fill=status_color)
-                cx += _tw(label)
-                if date_label and cx + sp_w + _tw(date_label) <= self.display_width:
-                    cx += sp_w
-                    tdraw.text((cx, text_y), date_label, font=font, fill=(160, 160, 160))
-        else:
-            tdraw.text((logo_w + gap, text_y), name_pos, font=font, fill=self.player_color)
-
-        cw = _tw(comment) if comment else 0
-        bottom_img = Image.new("RGB", (max(cw, 1), row_h), (0, 0, 0))
-        if comment and cw > 0:
-            bdraw = ImageDraw.Draw(bottom_img)
-            cy = (row_h - font_h) // 2
-            bdraw.text((0, cy), comment, font=font, fill=(200, 200, 200))
-
-        # Tile top to match bottom width; at least 2 tiles ensures the static illusion
-        num_tiles = max(2, (max(cw, 1) + self.display_width - 1) // self.display_width)
-        card_w = num_tiles * self.display_width
-
-        card = Image.new("RGB", (card_w, self.display_height), (0, 0, 0))
-        for i in range(num_tiles):
-            card.paste(top_tile, (i * self.display_width, 0))
-
-        paste_w = min(cw, card_w)
-        if paste_w > 0:
-            card.paste(bottom_img.crop((0, 0, paste_w, row_h)), (0, row_h))
-
-        return card
-
     def _build_injury_content(self) -> List[Image.Image]:
         """Build ordered scroll items for the injury ticker."""
         players = self.injuries_data
@@ -1874,11 +1634,6 @@ class NFLDraftPlugin(BasePlugin):
         try:
             self.injuries_data = self._fetch_injury_report()
             self._create_injuries_scroll_image()
-            # Reset split-row state so the new data is picked up on the next display() call
-            self._inj_player_idx = 0
-            self._inj_scroll_x = 0.0
-            self._inj_top_img = None
-            self._inj_bottom_img = None
             self.last_injuries_update = current_time
             self.logger.info(f"Loaded {len(self.injuries_data)} injury entries")
         except Exception as e:
@@ -1972,15 +1727,17 @@ class NFLDraftPlugin(BasePlugin):
         if force_clear:
             self.display_manager.clear()
 
-        # Vegas STATIC mode calls display(force_clear=True) without display_mode.
-        # Infer mode from plugin state and start the background animation thread.
-        _vegas_static = force_clear and display_mode is None
-        _active_mode = display_mode or (self._infer_active_mode() if _vegas_static else "")
-
+        # Leaders / injuries modes share the same scroll render path
+        _active_mode = display_mode or ""
         if _active_mode == "nfl_leaders_ticker":
             if not self._is_leaders_season_active():
                 self._display_blank()
                 return
+        elif _active_mode == "nfl_injuries_ticker":
+            if not self._is_leaders_active():
+                self._display_blank()
+                return
+        if _active_mode in ("nfl_leaders_ticker", "nfl_injuries_ticker"):
             try:
                 self.scroll_helper.update_scroll_position()
                 visible = self.scroll_helper.get_visible_portion()
@@ -1989,22 +1746,6 @@ class NFLDraftPlugin(BasePlugin):
                     self.display_manager.update_display()
             except Exception as e:
                 self.logger.error(f"Error displaying {self.plugin_id}: {e}")
-                self._display_error()
-            return
-
-        if _active_mode == "nfl_injuries_ticker":
-            if not self._is_leaders_active():
-                self._display_blank()
-                return
-            if _vegas_static:
-                # Vegas STATIC: launch background animation thread and return immediately.
-                # The coordinator sleeps for get_display_duration() while the thread animates.
-                self._start_injury_vegas_animation()
-                return
-            try:
-                self._display_injury_split_row()
-            except Exception as e:
-                self.logger.error(f"Error displaying injury ticker: {e}")
                 self._display_error()
             return
 
@@ -2108,59 +1849,6 @@ class NFLDraftPlugin(BasePlugin):
     # Vegas scroll mode support
     # -------------------------------------------------------------------------
 
-    def _infer_active_mode(self) -> str:
-        """Infer the current display mode from plugin state (used when display_mode is not passed)."""
-        with self._state_lock:
-            has_picks = bool(self.draft_picks)
-            status = self.draft_status
-        if has_picks and status in ("live", "complete", "simulate"):
-            return "nfl_draft_ticker"
-        if self._is_leaders_season_active() and self.leaders_data:
-            return "nfl_leaders_ticker"
-        if self._is_leaders_active() and self.injuries_data:
-            return "nfl_injuries_ticker"
-        return "nfl_draft_ticker"
-
-    def _start_injury_vegas_animation(self) -> None:
-        """Launch a background thread that runs the split-row injury animation.
-
-        Called from display() during a Vegas STATIC pause. The thread writes
-        frames directly to the display at ~30 fps for the plugin's display
-        duration, stopping slightly before the coordinator resumes scrolling.
-        """
-        self._inj_static_stop.set()
-        if self._inj_static_thread and self._inj_static_thread.is_alive():
-            self._inj_static_thread.join(timeout=0.5)
-
-        self._inj_static_stop.clear()
-        duration = max(5.0, float(self.get_display_duration()) - 0.3)
-
-        def _animate() -> None:
-            self._inj_last_frame_time = 0.0
-            if self._inj_top_img is None or self._inj_bottom_img is None:
-                self._inj_player_idx = 0
-                self._inj_scroll_x = 0.0
-                self._inj_build_player()
-            end = time.time() + duration
-            while time.time() < end and not self._inj_static_stop.is_set():
-                try:
-                    self._display_injury_split_row()
-                except Exception as e:
-                    self.logger.warning("Injury Vegas animation error: %s", e)
-                    break
-                time.sleep(1 / 30)
-
-        self._inj_static_thread = threading.Thread(
-            target=_animate, daemon=True, name="inj-vegas-anim"
-        )
-        self._inj_static_thread.start()
-
-    def get_vegas_display_mode(self) -> VegasDisplayMode:
-        """Return STATIC when injury content is what this plugin would show."""
-        if self._infer_active_mode() == "nfl_injuries_ticker":
-            return VegasDisplayMode.STATIC
-        return super().get_vegas_display_mode()
-
     def get_vegas_content_type(self) -> str:
         """Report as multi-item content so Vegas uses SCROLL mode by default."""
         return 'multi'
@@ -2192,11 +1880,9 @@ class NFLDraftPlugin(BasePlugin):
             if imgs:
                 content.extend(imgs)
         if self._is_leaders_active() and self.injuries_data:
-            # Return a single placeholder: get_vegas_display_mode() returns STATIC so the
-            # coordinator intercepts this segment and calls display() for the animation
-            # instead of scrolling the content directly.
-            placeholder = Image.new("RGB", (self.display_width, self.display_height), (0, 0, 0))
-            content.append(placeholder)
+            imgs = self._build_injury_content()
+            if imgs:
+                content.extend(imgs)
         if content:
             return content
 
