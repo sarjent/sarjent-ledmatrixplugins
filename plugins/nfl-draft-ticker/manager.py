@@ -1272,6 +1272,17 @@ class NFLDraftPlugin(BasePlugin):
                         week_label = f"WK{num}"
 
             for competition in event.get("competitions", []):
+                # Build team-id → abbreviation lookup from the competitors block.
+                # The leaders array often only carries {"id": "12"} without abbreviation,
+                # so we resolve it from the full competitor team objects.
+                team_id_to_abbr: Dict[str, str] = {}
+                for comp in competition.get("competitors", []):
+                    t = comp.get("team", {})
+                    tid = str(t.get("id", ""))
+                    abbr = t.get("abbreviation", "")
+                    if tid and abbr:
+                        team_id_to_abbr[tid] = abbr
+
                 for group in competition.get("leaders", []):
                     stat_name = group.get("name", "")
                     if stat_name not in self.leaders_stat_types:
@@ -1291,10 +1302,20 @@ class NFLDraftPlugin(BasePlugin):
                         pos_obj = athlete.get("position", {})
                         position = pos_obj.get("abbreviation", "") if isinstance(pos_obj, dict) else ""
 
+                        # Resolve team abbreviation: try direct field, then competitor
+                        # lookup by team id, then athlete's own team reference.
+                        team_abbr = team.get("abbreviation", "")
+                        if not team_abbr:
+                            team_abbr = team_id_to_abbr.get(str(team.get("id", "")), "")
+                        if not team_abbr:
+                            ath_team = athlete.get("team", {})
+                            team_abbr = ath_team.get("abbreviation", "") or \
+                                team_id_to_abbr.get(str(ath_team.get("id", "")), "")
+
                         leaders.append({
                             "name": name,
                             "position": position,
-                            "team_abbr": team.get("abbreviation", ""),
+                            "team_abbr": team_abbr,
                             "stat_line": entry.get("displayValue", ""),
                             "stat_value": float(entry.get("value", 0)),
                             "stat_type": stat_name,
