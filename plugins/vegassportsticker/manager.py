@@ -99,6 +99,11 @@ except ImportError:
 # Get logger
 logger = logging.getLogger(__name__)
 
+# Leagues that play roughly once a week per team rather than daily - for these,
+# "today_only" (meant to mean "just show what's on right now") would show
+# nothing most days, since a literal single calendar day rarely has a game.
+WEEKLY_SCHEDULE_LEAGUES = {'nfl', 'ncaa_fb'}
+
 
 class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
     """Vegas Sports Ticker — scrolling sports odds and live score display for multiple sports leagues."""
@@ -1067,7 +1072,16 @@ class VegasSportsTickerPlugin(BasePlugin, BaseOddsManager):
         """Fetch upcoming games for a specific league using day-by-day approach."""
         games = []
         today_only = league_config.get('today_only', False)
-        if today_only:
+        if today_only and canonical_league_key in WEEKLY_SCHEDULE_LEAGUES:
+            # Expand "today only" to the current game week (Tuesday through the
+            # following Monday, matching the NFL's own week-boundary convention)
+            # instead of a literal single day - otherwise this only ever shows
+            # games on the exact day one happens to be scheduled.
+            days_since_tuesday = (now.weekday() - 1) % 7  # Mon=0 ... Tue=1 in datetime.weekday()
+            week_start = now - timedelta(days=days_since_tuesday)
+            dates = [(week_start + timedelta(days=i)).strftime("%Y%m%d") for i in range(7)]
+            future_window = week_start + timedelta(days=7)
+        elif today_only:
             dates = [now.strftime("%Y%m%d")]
             future_window = now + timedelta(days=1)
         else:
