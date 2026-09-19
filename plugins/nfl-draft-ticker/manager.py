@@ -1242,19 +1242,29 @@ class NFLDraftPlugin(BasePlugin):
     def _fetch_weekly_leaders(self) -> List[Dict[str, Any]]:
         """Fetch NFL game stat leaders from ESPN scoreboard."""
         season_year, week = self._get_leaders_url_params()
-        week_tag = str(week) if week else "current"
-        cache_key = f"nfl_leaders_{season_year}_{week_tag}"
+        now = datetime.now()
 
         # During the active season refresh more aggressively
-        now = datetime.now()
         cache_ttl = self.leaders_refresh_interval if now.month not in range(9, 13) else 300
 
-        url = (
-            f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
-            f"?seasontype=2&dates={season_year}"
-        )
         if week:
-            url += f"&week={week}"
+            # Off-season recap: an explicit prior-season week - dates=<year>
+            # combined with an explicit week resolves correctly here.
+            cache_key = f"nfl_leaders_{season_year}_{week}"
+            url = (
+                f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+                f"?seasontype=2&dates={season_year}&week={week}"
+            )
+        else:
+            # In-season: let ESPN resolve the live current week from today's actual
+            # date, same pattern used everywhere else in this codebase
+            # (vegassportsticker, LEDMatrix managers). A bare year in `dates`
+            # (e.g. "dates=2026") does NOT reliably mean "today" - it was
+            # resolving to the tail end of the *previous* season (week 18)
+            # instead of the live current week.
+            date_str = now.strftime("%Y%m%d")
+            cache_key = f"nfl_leaders_{date_str}"
+            url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={date_str}"
 
         data = self.api_helper.get(url, cache_key=cache_key, cache_ttl=cache_ttl)
         if not data:
@@ -1262,6 +1272,15 @@ class NFLDraftPlugin(BasePlugin):
 
         leaders: List[Dict[str, Any]] = []
         week_label = ""
+
+        # Prefer the response's own top-level week/season fields (authoritative
+        # for the live-resolved week) over scanning individual events.
+        top_week = data.get("week", {})
+        if isinstance(top_week, dict) and top_week.get("number"):
+            week_label = f"WK{top_week['number']}"
+        top_season = data.get("season", {})
+        if isinstance(top_season, dict) and top_season.get("year"):
+            season_year = top_season["year"]
 
         for event in data.get("events", []):
             if not week_label:
