@@ -90,6 +90,7 @@ class NFLDraftPlugin(BasePlugin):
         self.injuries_data: List[Dict[str, Any]] = []
         self.last_leaders_update: Optional[float] = None
         self.last_injuries_update: Optional[float] = None
+        self.leaders_week_live: bool = False
 
         # Font loading - separate sizes for player name vs details
         self.player_name_font = self._load_font(self.player_name_font_size)
@@ -197,6 +198,9 @@ class NFLDraftPlugin(BasePlugin):
         _raw_types = self.config.get("leaders_stat_types", ["passing", "rushing", "receiving"])
         self.leaders_stat_types = [_stat_map[t] for t in _raw_types if t in _stat_map]
         self.leaders_refresh_interval = self.config.get("leaders_refresh_interval", 3600)
+        # Used instead of leaders_refresh_interval whenever no game in the
+        # current week is live - no need to poll hourly between weeks.
+        self.leaders_idle_refresh_interval = self.config.get("leaders_idle_refresh_interval", 21600)
 
         # Injuries mode settings
         self.injury_positions = self.config.get("injury_positions", ["QB", "RB", "WR", "TE", "K"])
@@ -1282,6 +1286,14 @@ class NFLDraftPlugin(BasePlugin):
         if isinstance(top_season, dict) and top_season.get("year"):
             season_year = top_season["year"]
 
+        # Drives _update_leaders()'s refresh cadence: poll hourly while any
+        # game this week is live, back off once the week is over or hasn't
+        # started yet.
+        self.leaders_week_live = any(
+            event.get("status", {}).get("type", {}).get("state") == "in"
+            for event in data.get("events", [])
+        )
+
         for event in data.get("events", []):
             if not week_label:
                 wk = event.get("week", {})
@@ -1642,8 +1654,12 @@ class NFLDraftPlugin(BasePlugin):
     def _update_leaders(self) -> None:
         """Fetch leaders data and rebuild scroll image."""
         current_time = time.time()
+        # Poll hourly (leaders_refresh_interval) while this week's games are
+        # live; back off to leaders_idle_refresh_interval once the week has
+        # concluded or before it starts - based on what the last fetch saw.
+        refresh_interval = self.leaders_refresh_interval if self.leaders_week_live else self.leaders_idle_refresh_interval
         if (self.last_leaders_update is not None
-                and current_time - self.last_leaders_update < self.leaders_refresh_interval):
+                and current_time - self.last_leaders_update < refresh_interval):
             return
 
         if not self._is_leaders_season_active():
@@ -1690,6 +1706,17 @@ class NFLDraftPlugin(BasePlugin):
         """
         current_time = time.time()
 
+        # Leaders/injuries refresh on their own cadence - each self-throttles
+        # via last_leaders_update/last_injuries_update - so this runs on every
+        # update() call rather than being gated by the draft-picks refresh
+        # below. That gate previously blocked leaders behind a 24h off-season
+        # throttle, making leaders_refresh_interval (hourly) dead code outside
+        # the draft window.
+        if self._is_leaders_season_active():
+            self._update_leaders()
+        if self._is_leaders_active():
+            self._update_injuries()
+
         # Use live_refresh_interval whenever the draft is active or we are
         # inside the date window (April 20-27) so polling ramps up automatically
         # on draft day even before ESPN flips state to "in".  Off-season this
@@ -1705,12 +1732,6 @@ class NFLDraftPlugin(BasePlugin):
         # Check if refresh is needed
         if self.last_update_time is not None and current_time - self.last_update_time < refresh_interval:
             return
-
-        # Refresh leaders only during the season; injuries year-round when active
-        if self._is_leaders_season_active():
-            self._update_leaders()
-        if self._is_leaders_active():
-            self._update_injuries()
 
         self.logger.info(f"Updating NFL Draft data (live={self.is_draft_live}, year={self.draft_year}, simulate={self.simulate_live})")
 

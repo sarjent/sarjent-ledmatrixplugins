@@ -259,8 +259,15 @@
     },
     "leaders_refresh_interval": {
       "type": "integer",
-      "description": "How often to refresh leaders data in seconds.",
+      "description": "How often to refresh leaders data in seconds, while any game this week is live.",
       "default": 3600,
+      "minimum": 300,
+      "maximum": 86400
+    },
+    "leaders_idle_refresh_interval": {
+      "type": "integer",
+      "description": "How often to refresh leaders data in seconds when no game this week is currently live (before or after the week's games).",
+      "default": 21600,
       "minimum": 300,
       "maximum": 86400
     },
