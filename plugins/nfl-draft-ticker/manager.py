@@ -35,6 +35,47 @@ from src.common.api_helper import APIHelper
 
 logger = logging.getLogger(__name__)
 
+# ESPN core-API NFL team id -> abbreviation. Used to resolve season-leaders
+# entries, which only carry a team $ref (no embedded abbreviation) - stable
+# across seasons since these ids only change on a relocation (e.g. OAK->LV),
+# rare enough that a static map beats an extra API round trip per leader.
+ESPN_TEAM_ID_TO_ABBR = {
+    "1": "ATL", "2": "BUF", "3": "CHI", "4": "CIN", "5": "CLE", "6": "DAL",
+    "7": "DEN", "8": "DET", "9": "GB", "10": "TEN", "11": "IND", "12": "KC",
+    "13": "LV", "14": "LAR", "15": "MIA", "16": "MIN", "17": "NE", "18": "NO",
+    "19": "NYG", "20": "NYJ", "21": "PHI", "22": "ARI", "23": "PIT", "24": "LAC",
+    "25": "SF", "26": "SEA", "27": "TB", "28": "WSH", "29": "CAR", "30": "JAX",
+    "33": "BAL", "34": "HOU",
+}
+
+# Position-specific stat-line fields, as (category, stat, label) triples read
+# from a player's ESPN core-API season statistics resource. Keyed by
+# athlete.position.abbreviation. Chosen deliberately over ESPN's own
+# per-game leader displayValue (e.g. "26/40, 235 YDS, 1 TD") since that's
+# always missing exactly one field these want (targets, rec TD, or rush TD).
+STAT_LINE_FIELDS = {
+    "QB": [
+        ("passing", "passingAttempts", "ATT"),
+        ("passing", "completions", "CMP"),
+        ("passing", "passingTouchdowns", "PASS TD"),
+        ("rushing", "rushingTouchdowns", "RUSH TD"),
+    ],
+    "RB": [
+        ("rushing", "rushingAttempts", "ATT"),
+        ("rushing", "rushingYards", "YDS"),
+        ("rushing", "rushingTouchdowns", "TD"),
+        ("receiving", "receivingTouchdowns", "REC TD"),
+    ],
+    "WR": [
+        ("receiving", "receptions", "REC"),
+        ("receiving", "receivingTargets", "TGT"),
+        ("receiving", "receivingYards", "YDS"),
+        ("receiving", "receivingTouchdowns", "TD"),
+    ],
+}
+STAT_LINE_FIELDS["FB"] = STAT_LINE_FIELDS["RB"]
+STAT_LINE_FIELDS["TE"] = STAT_LINE_FIELDS["WR"]
+
 
 class NFLDraftPlugin(BasePlugin):
     """
@@ -1243,6 +1284,97 @@ class NFLDraftPlugin(BasePlugin):
         else:                   # Feb-Aug: prior season week 18 as season recap
             return year - 1, 18
 
+    def _resolve_athlete(self, athlete_ref: str) -> Optional[Dict[str, Any]]:
+        """Fetch an ESPN core-API athlete resource by its $ref URL. Cached for
+        a week - name/position don't change mid-season."""
+        if not athlete_ref:
+            return None
+        match = re.search(r"/athletes/(\d+)", athlete_ref)
+        athlete_id = match.group(1) if match else athlete_ref
+        return self.api_helper.get(athlete_ref, cache_key=f"nfl_athlete_{athlete_id}", cache_ttl=604800)
+
+    def _fetch_athlete_stat_line(self, athlete_id: str, season_year: int, position: str) -> str:
+        """Build a position-specific stat line (STAT_LINE_FIELDS) from a
+        player's season-to-date ESPN core-API statistics. Empty string if the
+        position isn't mapped or the data can't be found, so the caller can
+        fall back to whatever ESPN's own leader displayValue provided."""
+        fields = STAT_LINE_FIELDS.get(position)
+        if not fields or not athlete_id:
+            return ""
+
+        url = (
+            f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+            f"/seasons/{season_year}/types/2/athletes/{athlete_id}/statistics/0"
+        )
+        data = self.api_helper.get(
+            url, cache_key=f"nfl_athlete_stats_{season_year}_{athlete_id}", cache_ttl=1800
+        )
+        if not data:
+            return ""
+
+        categories = {
+            cat.get("name"): {s.get("name"): s.get("displayValue") for s in cat.get("stats", [])}
+            for cat in data.get("splits", {}).get("categories", [])
+        }
+
+        parts = []
+        for category, stat, label in fields:
+            value = categories.get(category, {}).get(stat)
+            if value is None:
+                return ""
+            parts.append(f"{value} {label}")
+        return ", ".join(parts)
+
+    def _fetch_season_leaders(self, season_year: int) -> List[Dict[str, Any]]:
+        """Fetch season-long (not week-scoped) NFL statistical leaders.
+
+        Used between weeks - before the current week's first game kicks off,
+        and once every game in the current week is final - so there's always
+        something meaningful to show instead of an empty week-leaders section.
+        """
+        url = (
+            f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+            f"/seasons/{season_year}/types/2/leaders"
+        )
+        cache_key = f"nfl_season_leaders_{season_year}"
+        data = self.api_helper.get(url, cache_key=cache_key, cache_ttl=self.leaders_idle_refresh_interval)
+        if not data:
+            return []
+
+        leaders: List[Dict[str, Any]] = []
+        for category in data.get("categories", []):
+            stat_name = category.get("name", "")
+            if stat_name not in self.leaders_stat_types:
+                continue
+
+            for entry in category.get("leaders", [])[:3]:
+                athlete = self._resolve_athlete(entry.get("athlete", {}).get("$ref", ""))
+                if not athlete:
+                    continue
+
+                name = athlete.get("shortName", "") or athlete.get("displayName", "")
+                pos_obj = athlete.get("position", {})
+                position = pos_obj.get("abbreviation", "") if isinstance(pos_obj, dict) else ""
+
+                team_ref = entry.get("team", {}).get("$ref", "")
+                team_match = re.search(r"/teams/(\d+)", team_ref)
+                team_abbr = ESPN_TEAM_ID_TO_ABBR.get(team_match.group(1), "") if team_match else ""
+
+                stat_line = self._fetch_athlete_stat_line(str(athlete.get("id", "")), season_year, position)
+
+                leaders.append({
+                    "name": name,
+                    "position": position,
+                    "team_abbr": team_abbr,
+                    "stat_line": stat_line or entry.get("displayValue", ""),
+                    "stat_value": float(entry.get("value", 0)),
+                    "stat_type": stat_name,
+                    "week_label": "",  # season mode - header falls back to "NFL {season} LEADERS"
+                    "season_year": season_year,
+                })
+
+        return leaders
+
     def _fetch_weekly_leaders(self) -> List[Dict[str, Any]]:
         """Fetch NFL game stat leaders from ESPN scoreboard."""
         season_year, week = self._get_leaders_url_params()
@@ -1274,14 +1406,7 @@ class NFLDraftPlugin(BasePlugin):
         if not data:
             return []
 
-        leaders: List[Dict[str, Any]] = []
-        week_label = ""
-
-        # Prefer the response's own top-level week/season fields (authoritative
-        # for the live-resolved week) over scanning individual events.
-        top_week = data.get("week", {})
-        if isinstance(top_week, dict) and top_week.get("number"):
-            week_label = f"WK{top_week['number']}"
+        events = data.get("events", [])
         top_season = data.get("season", {})
         if isinstance(top_season, dict) and top_season.get("year"):
             season_year = top_season["year"]
@@ -1289,12 +1414,29 @@ class NFLDraftPlugin(BasePlugin):
         # Drives _update_leaders()'s refresh cadence: poll hourly while any
         # game this week is live, back off once the week is over or hasn't
         # started yet.
-        self.leaders_week_live = any(
-            event.get("status", {}).get("type", {}).get("state") == "in"
-            for event in data.get("events", [])
-        )
+        states = [e.get("status", {}).get("type", {}).get("state", "") for e in events]
+        self.leaders_week_live = "in" in states
 
-        for event in data.get("events", []):
+        if not week:
+            # In-season: show this week's own leaders only while the week has
+            # actually started (>=1 game live or final) and isn't fully done
+            # yet - otherwise (before kickoff, or once the week is over) show
+            # season leaders so there's something meaningful on screen.
+            any_started = any(s in ("in", "post") for s in states)
+            all_finished = bool(states) and all(s == "post" for s in states)
+            if not (any_started and not all_finished):
+                return self._fetch_season_leaders(season_year)
+
+        leaders: List[Dict[str, Any]] = []
+        week_label = ""
+
+        # Prefer the response's own top-level week field (authoritative for
+        # the live-resolved week) over scanning individual events.
+        top_week = data.get("week", {})
+        if isinstance(top_week, dict) and top_week.get("number"):
+            week_label = f"WK{top_week['number']}"
+
+        for event in events:
             if not week_label:
                 wk = event.get("week", {})
                 if isinstance(wk, dict):
@@ -1343,11 +1485,15 @@ class NFLDraftPlugin(BasePlugin):
                             team_abbr = ath_team.get("abbreviation", "") or \
                                 team_id_to_abbr.get(str(ath_team.get("id", "")), "")
 
+                        stat_line = self._fetch_athlete_stat_line(
+                            str(athlete.get("id", "")), season_year, position
+                        )
+
                         leaders.append({
                             "name": name,
                             "position": position,
                             "team_abbr": team_abbr,
-                            "stat_line": entry.get("displayValue", ""),
+                            "stat_line": stat_line or entry.get("displayValue", ""),
                             "stat_value": float(entry.get("value", 0)),
                             "stat_type": stat_name,
                             "week_label": week_label,
