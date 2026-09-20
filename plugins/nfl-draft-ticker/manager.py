@@ -1293,23 +1293,15 @@ class NFLDraftPlugin(BasePlugin):
         athlete_id = match.group(1) if match else athlete_ref
         return self.api_helper.get(athlete_ref, cache_key=f"nfl_athlete_{athlete_id}", cache_ttl=604800)
 
-    def _fetch_athlete_stat_line(self, athlete_id: str, season_year: int, position: str) -> str:
-        """Build a position-specific stat line (STAT_LINE_FIELDS) from a
-        player's season-to-date ESPN core-API statistics. Empty string if the
-        position isn't mapped or the data can't be found, so the caller can
-        fall back to whatever ESPN's own leader displayValue provided."""
+    def _format_stat_line(self, data: Optional[Dict[str, Any]], position: str) -> str:
+        """Build a position-specific stat line (STAT_LINE_FIELDS) from an ESPN
+        core-API athlete-statistics resource (splits.categories[].stats[]).
+        Works for both the season-aggregate and per-game shapes - same
+        format. Zero-value fields are omitted. Empty string if the position
+        isn't mapped or a required field is missing, so the caller can fall
+        back to whatever ESPN's own leader displayValue provided."""
         fields = STAT_LINE_FIELDS.get(position)
-        if not fields or not athlete_id:
-            return ""
-
-        url = (
-            f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
-            f"/seasons/{season_year}/types/2/athletes/{athlete_id}/statistics/0"
-        )
-        data = self.api_helper.get(
-            url, cache_key=f"nfl_athlete_stats_{season_year}_{athlete_id}", cache_ttl=1800
-        )
-        if not data:
+        if not fields or not data:
             return ""
 
         categories = {
@@ -1330,6 +1322,38 @@ class NFLDraftPlugin(BasePlugin):
                 continue
             parts.append(f"{value} {label}")
         return ", ".join(parts)
+
+    def _fetch_athlete_stat_line(self, athlete_id: str, season_year: int, position: str) -> str:
+        """Season-to-date stat line - used for season-mode leaders, where the
+        whole season's cumulative production is exactly what should show."""
+        if not athlete_id:
+            return ""
+        url = (
+            f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+            f"/seasons/{season_year}/types/2/athletes/{athlete_id}/statistics/0"
+        )
+        data = self.api_helper.get(
+            url, cache_key=f"nfl_athlete_stats_{season_year}_{athlete_id}", cache_ttl=1800
+        )
+        return self._format_stat_line(data, position)
+
+    def _fetch_athlete_game_stat_line(self, event_id: str, team_id: str, athlete_id: str, position: str) -> str:
+        """Single-game stat line - used for week-mode leaders, so a player's
+        line reflects only the specific game they're a leader in rather than
+        blending in production from other weeks. Critically, this also means
+        a player whose game hasn't started yet has no stats to show at all
+        (rather than misleadingly showing their season total)."""
+        if not (event_id and team_id and athlete_id):
+            return ""
+        url = (
+            f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl"
+            f"/events/{event_id}/competitions/{event_id}/competitors/{team_id}"
+            f"/roster/{athlete_id}/statistics/0"
+        )
+        data = self.api_helper.get(
+            url, cache_key=f"nfl_athlete_game_stats_{event_id}_{athlete_id}", cache_ttl=self.leaders_refresh_interval
+        )
+        return self._format_stat_line(data, position)
 
     def _fetch_season_leaders(self, season_year: int) -> List[Dict[str, Any]]:
         """Fetch season-long (not week-scoped) NFL statistical leaders.
@@ -1450,6 +1474,15 @@ class NFLDraftPlugin(BasePlugin):
                     if num:
                         week_label = f"WK{num}"
 
+            # ESPN pre-populates a not-yet-started game's `leaders` array with
+            # each team's season-to-date leaders as a matchup preview - not
+            # real week-of stats. Skip those events entirely so a player
+            # whose game hasn't started yet can't show up as a "current
+            # week" leader (confirmed live: an unplayed game's "leaders"
+            # exactly matched that player's season totals).
+            if event.get("status", {}).get("type", {}).get("state", "") == "pre":
+                continue
+
             for competition in event.get("competitions", []):
                 # Build team-id → abbreviation lookup from the competitors block.
                 # The leaders array often only carries {"id": "12"} without abbreviation,
@@ -1491,8 +1524,9 @@ class NFLDraftPlugin(BasePlugin):
                             team_abbr = ath_team.get("abbreviation", "") or \
                                 team_id_to_abbr.get(str(ath_team.get("id", "")), "")
 
-                        stat_line = self._fetch_athlete_stat_line(
-                            str(athlete.get("id", "")), season_year, position
+                        team_id = str(team.get("id", "") or athlete.get("team", {}).get("id", ""))
+                        stat_line = self._fetch_athlete_game_stat_line(
+                            event.get("id", ""), team_id, str(athlete.get("id", "")), position
                         )
 
                         leaders.append({
