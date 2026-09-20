@@ -1322,6 +1322,12 @@ class NFLDraftPlugin(BasePlugin):
             value = categories.get(category, {}).get(stat)
             if value is None:
                 return ""
+            try:
+                is_zero = float(value) == 0
+            except (TypeError, ValueError):
+                is_zero = False
+            if is_zero:
+                continue
             parts.append(f"{value} {label}")
         return ", ".join(parts)
 
