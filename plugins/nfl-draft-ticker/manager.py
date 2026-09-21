@@ -49,26 +49,22 @@ ESPN_TEAM_ID_TO_ABBR = {
 }
 
 # Position-specific stat-line fields, as (category, stat, label) triples read
-# from a player's ESPN core-API season statistics resource. Keyed by
-# athlete.position.abbreviation. Chosen deliberately over ESPN's own
-# per-game leader displayValue (e.g. "26/40, 235 YDS, 1 TD") since that's
-# always missing exactly one field these want (targets, rec TD, or rush TD).
+# from a player's ESPN core-API statistics resource. Keyed by
+# athlete.position.abbreviation. Kept short/broadcast-style (CMP/YDS/TD/INT,
+# etc.) rather than spelled out, since these render on a small LED matrix.
 STAT_LINE_FIELDS = {
     "QB": [
-        ("passing", "passingAttempts", "ATT"),
         ("passing", "completions", "CMP"),
-        ("passing", "passingTouchdowns", "PASS TD"),
-        ("rushing", "rushingTouchdowns", "RUSH TD"),
+        ("passing", "passingYards", "YDS"),
+        ("passing", "passingTouchdowns", "TD"),
+        ("passing", "interceptions", "INT"),
     ],
     "RB": [
-        ("rushing", "rushingAttempts", "ATT"),
         ("rushing", "rushingYards", "YDS"),
         ("rushing", "rushingTouchdowns", "TD"),
-        ("receiving", "receivingTouchdowns", "REC TD"),
     ],
     "WR": [
         ("receiving", "receptions", "REC"),
-        ("receiving", "receivingTargets", "TGT"),
         ("receiving", "receivingYards", "YDS"),
         ("receiving", "receivingTouchdowns", "TD"),
     ],
