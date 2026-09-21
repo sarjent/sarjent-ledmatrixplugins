@@ -1418,15 +1418,20 @@ class NFLDraftPlugin(BasePlugin):
                 f"?seasontype=2&dates={season_year}&week={week}"
             )
         else:
-            # In-season: let ESPN resolve the live current week from today's actual
-            # date, same pattern used everywhere else in this codebase
-            # (vegassportsticker, LEDMatrix managers). A bare year in `dates`
-            # (e.g. "dates=2026") does NOT reliably mean "today" - it was
-            # resolving to the tail end of the *previous* season (week 18)
-            # instead of the live current week.
+            # In-season: a completely bare scoreboard call (no `dates` param
+            # at all) reliably returns ESPN's live-resolved *current week* -
+            # all of it, not just today. That distinction matters: a `dates`
+            # value scoped to one literal day (even today's) only returns
+            # games scheduled on that exact day - on a Monday, that's just
+            # tonight's MNF game, missing the 15 games already final earlier
+            # in the week, which made week_in_progress below wrongly compute
+            # False (no game found "started") and fall back to season mode.
+            # A bare year in `dates` (e.g. "dates=2026") is a separate, worse
+            # bug - that doesn't mean "today" either, it was resolving to the
+            # tail end of the *previous* season (week 18).
             date_str = now.strftime("%Y%m%d")
             cache_key = f"nfl_leaders_{date_str}"
-            url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={date_str}"
+            url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
 
         data = self.api_helper.get(url, cache_key=cache_key, cache_ttl=cache_ttl)
         if not data:
