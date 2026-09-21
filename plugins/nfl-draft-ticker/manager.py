@@ -244,6 +244,8 @@ class NFLDraftPlugin(BasePlugin):
         self.injury_statuses = self.config.get("injury_statuses", ["Out", "Doubtful", "Injured Reserve"])
         self.show_ota_active = self.config.get("show_ota_active", False)
         self.injuries_refresh_interval = self.config.get("injuries_refresh_interval", 3600)
+        self.injuries_per_team = self.config.get("injuries_per_team", 2)
+        self.injuries_starters_only = self.config.get("injuries_starters_only", True)
 
     def _load_font(self, size: int) -> ImageFont.ImageFont:
         """Load configured font at specified size."""
@@ -1543,6 +1545,20 @@ class NFLDraftPlugin(BasePlugin):
 
         return leaders
 
+    def _fetch_team_starter_ids(self, team_id: str) -> set:
+        """Athlete ids listed first at any slot on the team's ESPN depth chart."""
+        url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/{team_id}/depthcharts"
+        data = self.api_helper.get(url, cache_key=f"nfl_depth_{team_id}", cache_ttl=86400)
+        ids: set = set()
+        if not data:
+            return ids
+        for chart in data.get("depthchart", []):
+            for slot in chart.get("positions", {}).values():
+                athletes = slot.get("athletes", [])
+                if athletes:
+                    ids.add(str(athletes[0].get("id", "")))
+        return ids
+
     def _fetch_injury_report(self) -> List[Dict[str, Any]]:
         """Fetch NFL injury / OTA status report from ESPN."""
         cache_key = "nfl_injuries"
@@ -1554,6 +1570,7 @@ class NFLDraftPlugin(BasePlugin):
             return []
 
         players: List[Dict[str, Any]] = []
+        starters_cache: Dict[str, set] = {}
 
         for team_entry in data.get("injuries", []):
             for injury in team_entry.get("injuries", []):
@@ -1589,24 +1606,55 @@ class NFLDraftPlugin(BasePlugin):
                     except ValueError:
                         pass
 
+                # Starters-only: skip players not first on their team's depth chart.
+                # If the depth chart is unavailable, don't filter.
+                if self.injuries_starters_only:
+                    team_id = str(athlete.get("team", {}).get("id", ""))
+                    if team_id not in starters_cache:
+                        starters_cache[team_id] = self._fetch_team_starter_ids(team_id)
+                    starter_ids = starters_cache[team_id]
+                    athlete_id = ""
+                    for link in athlete.get("links", []):
+                        m = re.search(r"/id/(\d+)", link.get("href", ""))
+                        if m:
+                            athlete_id = m.group(1)
+                            break
+                    if starter_ids and athlete_id and athlete_id not in starter_ids:
+                        continue
+
                 # Prefer shortName, fall back to displayName
                 name = athlete.get("shortName", "") or athlete.get("displayName", "")
 
-                comment = injury.get("shortComment", "")
-                # Strip trailing reporter attribution: ", Name of Outlet reports."
-                comment = re.sub(r',\s+\S.*?\breports?\.\s*$', '', comment, flags=re.IGNORECASE).strip()
-
-                # Format date as short label e.g. "Jun 1"
-                date_label = report_date.strftime("%-m/%-d") if report_date else ""
+                # Injury type, e.g. "Hip" / "Achilles"; fall back to body location
+                details = injury.get("details", {}) or {}
+                injury_type = (details.get("type") or details.get("location") or "").strip()
+                if injury_type.lower() in ("not specified", "unknown"):
+                    injury_type = ""
 
                 players.append({
                     "name": name,
                     "position": position,
                     "team_abbr": team_abbr,
                     "status": status,
-                    "comment": comment,
-                    "date_label": date_label,
+                    "injury_type": injury_type,
                 })
+
+        # Trim to the most notable players per team (skill positions first,
+        # then by severity). ESPN provides no depth-chart/star rating, so
+        # position priority is the proxy for "notable".
+        if self.injuries_per_team > 0:
+            pos_rank = {p: i for i, p in enumerate(["QB", "RB", "WR", "TE", "K"])}
+            status_rank = {s: i for i, s in enumerate(["Out", "Doubtful", "Questionable", "Injured Reserve"])}
+            by_team: Dict[str, List[Dict[str, Any]]] = {}
+            for p in players:
+                by_team.setdefault(p["team_abbr"], []).append(p)
+            players = []
+            for team_players in by_team.values():
+                team_players.sort(key=lambda p: (
+                    pos_rank.get(p["position"], len(pos_rank)),
+                    status_rank.get(p["status"], len(status_rank)),
+                ))
+                players.extend(team_players[:self.injuries_per_team])
 
         return players
 
@@ -1691,7 +1739,7 @@ class NFLDraftPlugin(BasePlugin):
         return img
 
     def _create_injury_item(self, player: Dict[str, Any], show_logo: bool = True) -> Optional[Image.Image]:
-        """Render a single injury card: [LOGO] Name  POS / STATUS · comment."""
+        """Render a single injury card: [LOGO] Name  POS / STATUS (injury)."""
         team_abbr = player.get("team_abbr", "").upper()
         logo = self._load_team_logo(team_abbr) if show_logo else None
         logo_width = logo.width if logo else 0
@@ -1703,23 +1751,25 @@ class NFLDraftPlugin(BasePlugin):
 
         status_raw = player.get("status", "")
         label, status_color = self._STATUS_STYLE.get(status_raw, (status_raw[:3].upper(), (200, 200, 200)))
-        comment = player.get("comment", "")
-        detail_line = f"{label}" + (f"  {comment}" if comment else "")
+        injury_type = player.get("injury_type", "")
+        type_text = f" ({injury_type})" if injury_type else ""
 
         temp = Image.new("RGB", (1, 1))
         td = ImageDraw.Draw(temp)
-        try:
-            name_w = int(td.textlength(name_line, font=self.player_name_font))
-            detail_w = int(td.textlength(detail_line, font=self.injury_detail_font))
-        except Exception:
-            nb = td.textbbox((0, 0), name_line, font=self.player_name_font)
-            name_w = nb[2] - nb[0]
-            db = td.textbbox((0, 0), detail_line, font=self.injury_detail_font)
-            detail_w = db[2] - db[0]
+
+        def _w(text: str, font) -> int:
+            try:
+                return int(td.textlength(text, font=font))
+            except Exception:
+                bb = td.textbbox((0, 0), text, font=font)
+                return bb[2] - bb[0]
+
+        name_w = _w(name_line, self.player_name_font)
+        label_px = _w(label, self.injury_detail_font)
+        detail_w = label_px + _w(type_text, self.injury_detail_font)
 
         gap = 6
-        text_w = max(name_w, detail_w)
-        total_w = logo_width + gap + text_w
+        total_w = logo_width + gap + max(name_w, detail_w)
         img = Image.new("RGB", (max(total_w, 1), self.display_height), (0, 0, 0))
         draw = ImageDraw.Draw(img)
 
@@ -1737,20 +1787,10 @@ class NFLDraftPlugin(BasePlugin):
         top_y = (self.display_height - total_text_h) // 2
         draw.text((x, top_y), name_line, font=self.player_name_font, fill=self.player_color)
 
-        # Draw status label in status color, date + comment in white — both at injury_detail_font
-        label_text = label
-        date_label = player.get("date_label", "")
-        date_part = f"  {date_label}" if date_label else ""
-        rest_text = f"{date_part}  {comment}" if comment else date_part
-        try:
-            label_px = int(draw.textlength(label_text, font=self.injury_detail_font))
-        except Exception:
-            lb = draw.textbbox((0, 0), label_text, font=self.injury_detail_font)
-            label_px = lb[2] - lb[0]
         detail_y = top_y + self.player_name_font_size + line_gap
-        draw.text((x, detail_y), label_text, font=self.injury_detail_font, fill=status_color)
-        if rest_text:
-            draw.text((x + label_px, detail_y), rest_text, font=self.injury_detail_font, fill=(200, 200, 200))
+        draw.text((x, detail_y), label, font=self.injury_detail_font, fill=status_color)
+        if type_text:
+            draw.text((x + label_px, detail_y), type_text, font=self.injury_detail_font, fill=(200, 200, 200))
 
         return img
 

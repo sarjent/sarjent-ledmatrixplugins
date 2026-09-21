@@ -296,6 +296,18 @@
       "description": "During the off-season, also show Active players who have an injury note (OTA participation reports, contract news, etc.).",
       "default": false
     },
+    "injuries_starters_only": {
+      "type": "boolean",
+      "description": "Only show players who are listed as a starter on their team's ESPN depth chart.",
+      "default": true
+    },
+    "injuries_per_team": {
+      "type": "integer",
+      "description": "Max injured players shown per team, most notable first (skill positions, then by severity). 0 = no limit.",
+      "default": 2,
+      "minimum": 0,
+      "maximum": 10
+    },
     "injury_detail_font_size": {
       "type": "integer",
       "description": "Font size for the injury status and comment line.",
